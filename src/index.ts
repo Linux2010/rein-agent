@@ -1,5 +1,5 @@
 /**
- * x-agent - 通用 Agent 智能体框架
+ * rein-agent - 通用 Agent 智能体框架
  * 
  * 入口文件
  */
@@ -33,7 +33,7 @@ brain.submitTask({
 });
 
 // 输出状态
-console.log('\n[x-agent] System Status:');
+console.log('\n[rein-agent] System Status:');
 console.log(JSON.stringify(brain.getStatus(), null, 2));
 
 export { Brain, LeaderAgent, CoderAgent };

@@ -1,6 +1,7 @@
-# x-agent
+# Rein
 
-> 通用 Agent 智能体框架 - Universal Agent Intelligence Framework
+> **Rein the AI, Unleash the Potential.**  
+> 通用 Agent 驾驭框架 — Universal Agent Harness Framework
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0-green.svg)](https://nodejs.org)
@@ -10,35 +11,47 @@
 
 ## 🎯 项目定位
 
-**x-agent** 是一个通用的 AI Agent 智能体框架，旨在：
+**Rein**（缰绳）—— 让 Agent 不跑偏的通用驾驭框架。
 
-- 🧠 **多智能体协作** - 支持多个 Agent 协同工作
-- 🔌 **插件化架构** - 通过 Skills 和 Tools 扩展能力
-- 🌐 **多渠道接入** - 支持 Telegram/Discord/Web 等消息渠道
-- 📋 **任务驱动** - 基于 OpenTask 的任务分发和执行
-- 🔄 **自适应学习** - 持续优化 Agent 行为和能力
+> Agent 容易跑偏，所以需要 Harness。  
+> Rein 就是那根缰绳：给 AI 自由度，同时保持控制力。
+
+### 核心理念
+
+| 维度 | 说明 |
+|------|------|
+| **🐴 AI 如马** | 强大的 AI 模型需要引导和约束 |
+| **🪢 Rein 如缰** | 精准控制方向，防止跑偏失控 |
+| **🎯 Harness 系统** | 安全边界、任务约束、结果验证 |
 
 ---
 
 ## 🏗️ 架构设计
 
 ```
-x-agent/
-├── src/
-│   ├── core/          # 核心引擎
-│   │   ├── agent.ts   # Agent 基类
-│   │   ├── brain.ts   # 决策引擎
-│   │   └── memory.ts  # 记忆系统
-│   ├── agents/        # 预置 Agent
-│   │   ├── leader.ts  # 协调者 Agent
-│   │   ├── coder.ts   # 编码 Agent
-│   │   └── analyst.ts # 分析 Agent
-│   ├── skills/        # 技能库
-│   ├── tools/         # 工具集
-│   └── utils/         # 工具函数
-├── config/            # 配置文件
-├── docs/              # 文档
-└── tests/             # 测试
+┌─────────────────────────────────────────┐
+│         Harness 驾驭层                    │
+│  目标约束 │ 边界检查 │ 结果验证 │ 安全沙箱  │
+└──────────────────┬──────────────────────┘
+                   │
+┌──────────────────▼──────────────────────┐
+│          Brain 决策层                     │
+│  任务分解 │ 优先级 │ 路由 │ 状态管理       │
+└─────────┬─────────┬─────────┬──────────┘
+          │         │         │
+┌─────────▼┐ ┌──────▼──┐ ┌────▼──────┐
+│ Coder    │ │Analyst  │ │Ops Agent  │
+└────┬─────┘ └────┬────┘ └────┬──────┘
+     │            │            │
+┌────▼────────────▼────────────▼──────┐
+│          Skills + Tools              │
+│  Web │ Browser │ Git │ DB │ MCP     │
+└─────────────────┬───────────────────┘
+                  │
+┌─────────────────▼───────────────────┐
+│          Memory 记忆层                │
+│  Working │ Short-term │ Long-term    │
+└─────────────────────────────────────┘
 ```
 
 ---
@@ -47,8 +60,8 @@ x-agent/
 
 ```bash
 # 克隆项目
-git clone https://github.com/Linux2010/x-agent.git
-cd x-agent
+git clone https://github.com/Linux2010/rein-agent.git
+cd rein-agent
 
 # 安装依赖
 npm install
@@ -63,11 +76,12 @@ npm start
 
 | 特性 | 说明 |
 |------|------|
-| **多 Agent 编排** | 支持 Leader/Worker 模式 |
-| **技能系统** | 可扩展的 Skills 和 Tools |
-| **记忆管理** | 短期/长期记忆支持 |
-| **任务分发** | 集成 OpenTask 任务系统 |
-| **渠道适配** | Telegram/Discord/Web 支持 |
+| **Harness 驾驭系统** | 目标约束、边界检查、结果验证 |
+| **多 Agent 编排** | Leader/Worker 协作模式 |
+| **技能插件化** | 可扩展 Skills 和 Tools |
+| **记忆分层** | 工作记忆 / 短期 / 长期 |
+| **任务驱动** | OpenTask 集成 |
+| **本地优先** | 隐私保护，可选云端 |
 
 ---
 
@@ -83,6 +97,4 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
-**Version**: 0.1.0  
-**Created**: 2026-04-30  
-**Author**: [Linux2010](https://github.com/Linux2010)
+**Rein the AI, Unleash the Potential.** 🐴

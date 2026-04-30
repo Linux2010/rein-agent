@@ -1,5 +1,5 @@
 {
-  "name": "x-agent",
+  "name": "rein-agent",
   "version": "0.1.0",
   "description": "通用 Agent 智能体框架 - Universal Agent Intelligence Framework",
   "main": "dist/index.js",
