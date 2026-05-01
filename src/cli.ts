@@ -13,6 +13,8 @@ import chalk from 'chalk';
 import figlet from 'figlet';
 import { init, ReinRuntime } from './init';
 import { Task } from './core/agent';
+import { LLMService, Message, LLMResponse } from './services/llm';
+import { loadConfig, ReinCLIConfig, isConfigured, getConfigSummary, getConfigErrors } from './services/config';
 
 // ============================================================================
 // 颜色常量
@@ -25,6 +27,23 @@ const ERROR = chalk.red;
 const WARN = chalk.yellow;
 const SUCCESS = chalk.green;
 const HEADER = chalk.cyan.bold;
+
+// ============================================================================
+// 系统提示词
+// ============================================================================
+
+const SYSTEM_PROMPT = `You are Rein, an AI assistant powered by the Rein Agent Framework.
+You are helpful, concise, and accurate.
+Respond in the same language as the user.
+If asked about your capabilities, explain that you are an AI assistant that can help with various tasks.`;
+
+// ============================================================================
+// LLM 状态
+// ============================================================================
+
+let llm: LLMService | null = null;
+let cliConfig: ReinCLIConfig | null = null;
+let conversationHistory: Message[] = [];
 
 // ============================================================================
 // 欢迎界面
@@ -46,6 +65,16 @@ function printBanner(): void {
   console.log();
 }
 
+/** 打印 LLM 状态 */
+function printLLMStatus(): void {
+  if (!cliConfig || !isConfigured(cliConfig)) {
+    console.log(`${DIM('├')} ${WARN('LLM not configured')} ${DIM('| Set REIN_API_KEY in .env')}`);
+  } else if (llm) {
+    console.log(`${DIM('├')} ${SUCCESS('LLM ready')} ${DIM('|')} ${BRAND(llm.getModel())}`);
+  }
+  console.log();
+}
+
 // ============================================================================
 // 交互模式
 // ============================================================================
@@ -64,6 +93,10 @@ async function interactiveMode(runtime: ReinRuntime): Promise<void> {
 
   console.log(SUCCESS('✔ System initialized successfully'));
   console.log(DIM('  Type "help" for available commands, "exit" to quit'));
+  if (!isConfigured(cliConfig!)) {
+    console.log(WARN('  ⚠ LLM not configured — chat mode unavailable'));
+    console.log(DIM('  Set REIN_API_KEY in .env to enable chat'));
+  }
   console.log();
 
   printPrompt();
@@ -78,6 +111,9 @@ async function interactiveMode(runtime: ReinRuntime): Promise<void> {
     safety: () => printSafety(runtime),
     harness: () => printHarness(runtime),
     task: (args) => submitTask(runtime, args),
+    chat: (args) => handleChat(args),
+    model: (args) => handleModel(args),
+    config: () => printConfig(),
     clear: () => process.stdout.write('\x1Bc'),
     exit: () => handleExit(runtime),
     quit: () => handleExit(runtime),
@@ -106,8 +142,8 @@ async function interactiveMode(runtime: ReinRuntime): Promise<void> {
     if (handler) {
       handler(args);
     } else {
-      console.log(ERROR(`Unknown command: ${cmd}`));
-      console.log(DIM(`Type "help" for available commands`));
+      // 非命令输入 → 作为对话消息
+      handleChat(trimmed);
     }
 
     printPrompt();
@@ -129,6 +165,105 @@ async function interactiveMode(runtime: ReinRuntime): Promise<void> {
 // 命令实现
 // ============================================================================
 
+/** 处理对话消息（流式输出） */
+async function handleChat(input: string): Promise<void> {
+  if (!llm || !isConfigured(cliConfig!)) {
+    console.log(WARN('⚠ LLM not configured. Set REIN_API_KEY in .env to enable chat.'));
+    return;
+  }
+
+  if (!input) {
+    console.log(ERROR('Usage: chat <message>'));
+    return;
+  }
+
+  // 添加到对话历史
+  conversationHistory.push({ role: 'user', content: input });
+
+  // 初始化 system prompt
+  if (conversationHistory.length === 1) {
+    conversationHistory.unshift({ role: 'system', content: SYSTEM_PROMPT });
+  }
+
+  // 流式输出
+  console.log();
+  let currentLine = '';
+
+  try {
+    const response = await llm.chatStream(conversationHistory, (chunk: string) => {
+      process.stdout.write(chunk);
+      currentLine += chunk;
+    });
+
+    // 保存助手回复到历史
+    conversationHistory.push({ role: 'assistant', content: response.content });
+
+    console.log();
+
+    // 显示 token 用量
+    if (response.usage) {
+      console.log(
+        DIM(
+          `  └─ tokens: ${response.usage.promptTokens} in / ${response.usage.completionTokens} out | model: ${response.model}`,
+        ),
+      );
+    }
+  } catch (error: any) {
+    console.log();
+    console.log(ERROR(`✗ Error: ${error.message || String(error)}`));
+    // 移除用户消息（因为没有收到回复）
+    conversationHistory.pop();
+  }
+
+  console.log();
+}
+
+/** 切换模型 */
+function handleModel(modelName: string): void {
+  if (!modelName) {
+    if (llm) {
+      console.log(DIM(`Current model: ${BRAND(llm.getModel())}`));
+    } else {
+      console.log(ERROR('LLM not initialized. Set REIN_API_KEY first.'));
+    }
+    return;
+  }
+
+  if (!llm) {
+    console.log(ERROR('LLM not initialized. Set REIN_API_KEY first.'));
+    return;
+  }
+
+  llm.setModel(modelName);
+  console.log(SUCCESS(`✔ Model changed to ${BRAND(modelName)}`));
+  console.log();
+}
+
+/** 显示配置 */
+function printConfig(): void {
+  console.log();
+  console.log(HEADER('Configuration'));
+  console.log(DIM('─'.repeat(40)));
+
+  if (cliConfig) {
+    const summary = getConfigSummary(cliConfig);
+    const llmSummary = llm?.getConfigSummary() ?? {};
+
+    for (const [key, val] of Object.entries(summary)) {
+      console.log(`  ${ACCENT(key.padEnd(16))} ${DIM(val)}`);
+    }
+    console.log();
+    console.log(HEADER('  LLM Settings:'));
+    for (const [key, val] of Object.entries(llmSummary)) {
+      console.log(`  ${ACCENT(key.padEnd(16))} ${DIM(val)}`);
+    }
+  } else {
+    console.log(ERROR('  Config not loaded'));
+  }
+
+  console.log();
+}
+
 function printHelp(): void {
   console.log();
   console.log(HEADER('Commands:'));
@@ -141,6 +276,9 @@ function printHelp(): void {
     ['safety',    'Show safety checker status and audit summary'],
     ['harness',   'Show harness configuration'],
     ['task <n>',  'Submit a demo task (e.g., "task code" or "task review")'],
+    ['chat <m>',  'Send a message to the LLM (also works as free text)'],
+    ['model [m]', 'Show or change the current model (e.g., "model gpt-4o")'],
+    ['config',    'Show current configuration'],
     ['clear',     'Clear the terminal screen'],
     ['exit',      'Shutdown and exit'],
   ];
@@ -348,14 +486,31 @@ async function main(): Promise<void> {
   printBanner();
 
   // 加载环境变量
-  const mode = (process.env.REIN_MODE || 'development') as 'development' | 'production';
-  const logLevel = (process.env.REIN_LOG_LEVEL || 'info') as 'debug' | 'info' | 'warn' | 'error';
+  cliConfig = loadConfig();
+
+  // 检查 LLM 配置
+  if (isConfigured(cliConfig)) {
+    try {
+      llm = new LLMService({
+        apiKey: cliConfig.apiKey,
+        baseUrl: cliConfig.apiBaseUrl,
+        model: cliConfig.model,
+        maxTokens: cliConfig.maxTokens,
+        temperature: cliConfig.temperature,
+      });
+    } catch (err: any) {
+      console.log(WARN(`⚠ LLM initialization warning: ${err.message}`));
+    }
+  }
+
+  // 打印 LLM 状态
+  printLLMStatus();
 
   // 初始化系统
   const runtime = await init({
-    name: process.env.REIN_NAME || 'rein-agent',
-    mode,
-    logLevel,
+    name: cliConfig.name,
+    mode: cliConfig.mode,
+    logLevel: cliConfig.logLevel,
   });
 
   // 注册优雅关闭

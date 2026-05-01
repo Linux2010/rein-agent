@@ -41,3 +41,16 @@ export type {
   MemoryTier as StoreMemoryTier,
   MemoryQuery,
 } from './memory/store';
+
+// LLM 服务模块
+export { LLMService } from './services/llm';
+export type {
+  LLMConfig,
+  Message,
+  LLMResponse,
+  StreamCallback,
+} from './services/llm';
+
+// 配置模块
+export { loadConfig, isConfigured, getConfigErrors, getConfigSummary } from './services/config';
+export type { ReinCLIConfig } from './services/config';
