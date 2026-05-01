@@ -11,6 +11,8 @@ import { BaseAgent, AgentConfig, Task, TaskResult, AgentStatus } from './core/ag
 import { Brain, BrainConfig } from './core/brain';
 import { LeaderAgent } from './agents/leader';
 import { CoderAgent } from './agents/coder';
+import { SafetyChecker, SafetyPolicy } from './harness/safety';
+import { MemoryStore, MemoryStoreConfig } from './memory/store';
 
 // ============================================================================
 // 1. 配置类型定义
@@ -30,6 +32,8 @@ export interface ReinConfig {
   harness: HarnessConfig;
   /** Memory 记忆系统配置 */
   memory: MemoryConfig;
+  /** 安全策略配置 */
+  safety: SafetyConfig;
   /** Agent 注册表 */
   agents: AgentRegistryEntry[];
 }
@@ -64,6 +68,14 @@ export interface MemoryConfig {
   longTermBackend: 'memory' | 'file';
   /** 长期记忆持久化路径 */
   longTermPath?: string;
+}
+
+/** 安全策略配置 */
+export interface SafetyConfig {
+  /** 是否启用安全检查 */
+  enabled: boolean;
+  /** 安全策略 */
+  policy?: Partial<SafetyPolicy>;
 }
 
 /** Agent 注册条目 */
@@ -363,6 +375,13 @@ const DEFAULT_CONFIG: ReinConfig = {
     shortTermCapacity: 100,
     longTermBackend: 'memory',
   },
+  safety: {
+    enabled: true,
+    policy: {
+      sandboxMode: false,
+      allowedFileSystemOps: ['read', 'write'],
+    },
+  },
   agents: [
     { type: 'leader' },
     { type: 'coder' },
@@ -379,8 +398,12 @@ export interface ReinRuntime {
   brain: Brain;
   /** Harness 驾驭系统 */
   harness: Harness;
-  /** Memory 记忆系统 */
+  /** Memory 记忆系统（内联版） */
   memory: MemorySystem;
+  /** Safety 安全检查器（模块化版） */
+  safety: SafetyChecker;
+  /** Memory Store 记忆存储（模块化版） */
+  store: MemoryStore;
   /** 已注册的 Agent 列表 */
   agents: BaseAgent[];
   /** 当前配置 */
@@ -424,6 +447,18 @@ export async function init(userConfig: Partial<ReinConfig> = {}): Promise<ReinRu
     `shortTerm=${config.memory.shortTermCapacity}, ` +
     `backend=${config.memory.longTermBackend}`);
 
+  // --- Step 3.5: 创建 Safety 安全检查器 ---
+  logger.info('[Rein] Initializing Safety checker...');
+  const safety = new SafetyChecker(config.safety?.policy);
+  logger.info(`[Rein] Safety: enabled=${config.safety.enabled}`);
+
+  // --- Step 3.6: 创建 Memory Store ---
+  logger.info('[Rein] Initializing Memory store...');
+  const store = new MemoryStore({
+    workingCapacity: config.memory.workingCapacity,
+    shortTermCapacity: config.memory.shortTermCapacity,
+  });
+
   // --- Step 4: 创建 Brain 决策引擎 ---
   logger.info('[Rein] Initializing Brain...');
   const brain = new Brain(config.brain);
@@ -447,6 +482,8 @@ export async function init(userConfig: Partial<ReinConfig> = {}): Promise<ReinRu
     brain,
     harness,
     memory,
+    safety,
+    store,
     agents,
     config,
 
@@ -526,6 +563,9 @@ function mergeConfig(defaults: ReinConfig, override: Partial<ReinConfig>): ReinC
   }
   if (override.memory) {
     result.memory = { ...defaults.memory, ...override.memory };
+  }
+  if (override.safety) {
+    result.safety = { ...defaults.safety, ...override.safety };
   }
   if (override.agents) {
     result.agents = override.agents;
@@ -649,3 +689,12 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
+// ============================================================================
+// 重新导出
+// ============================================================================
+
+export { SafetyChecker } from './harness/safety';
+export { MemoryStore } from './memory/store';
+export type { SafetyPolicy, SafetyCheck, SecurityLevel, AuditLogEntry } from './harness/safety';
+export type { MemoryEntry as StoreMemoryEntry, MemoryTier as StoreMemoryTier, MemoryQuery, MemoryStoreConfig } from './memory/store';
