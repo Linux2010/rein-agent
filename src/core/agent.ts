@@ -66,15 +66,16 @@ export abstract class BaseAgent extends EventEmitter {
   /**
    * 注册技能
    */
-  registerSkill(name: string, handler: Function): void {
+  registerSkill(name: string, handler: (...args: any[]) => any): void {
     this.on(`skill:${name}`, handler);
   }
 
   /**
    * 触发技能
    */
-  async triggerSkill(name: string, params?: any): Promise<any> {
-    return this.emitAsync(`skill:${name}`, params);
+  async triggerSkill(name: string, params?: any): Promise<any[]> {
+    const listeners = this.listeners(`skill:${name}`) as Array<(params?: any) => any>;
+    return Promise.all(listeners.map(fn => fn(params)));
   }
 
   /**
