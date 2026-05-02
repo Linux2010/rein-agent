@@ -21,12 +21,13 @@ import { findCommand, executeChat } from './commands';
 import { parseInput, createCompleter, buildCommandSuggestions } from './commands/parser';
 import type { CommandContext } from './commands/types';
 import { getModeDisplayText } from './commands/types';
-import { renderHeaderBox, renderPromptSeparator, renderFooterBar } from './ui/box';
+import { renderHeaderBox, renderFooterBar } from './ui/box';
 
 // ============================================================================
 // 颜色常量
 // ============================================================================
 
+const ACCENT = chalk.hex('#00D4AA');
 const DIM = chalk.dim;
 const ERROR = chalk.red;
 const WARN = chalk.yellow;
@@ -80,31 +81,44 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
   // Prevent double-processing while async commands run
   let busy = false;
 
-  // Mode indicator in prompt
-  const getPromptWithMode = (): string => {
+  // Get mode display text for prompt
+  const getModeIndicator = (): string => {
     const mode = store.getSnapshot().permissionMode;
     const modeText = getModeDisplayText(mode);
-    return renderPromptSeparator(modeText);
+    return modeText ? `[${modeText}] ` : '';
   };
 
-  const prompt = () => {
-    console.log(getPromptWithMode());
+  // Build prompt string: ❯ + mode indicator
+  const buildPromptString = (): string => {
+    return ACCENT('❯ ') + DIM(getModeIndicator());
   };
 
-  // Draw footer after interactions
+  // Draw separator line
+  const drawSeparator = () => {
+    const width = process.stdout.columns || 80;
+    console.log(DIM('─'.repeat(width)));
+  };
+
+  // Draw footer bar
   const drawFooter = () => {
     console.log(renderFooterBar());
+  };
+
+  // Show prompt with separator (used after command completion)
+  const showPrompt = () => {
+    drawSeparator();
+    readline.setPrompt(buildPromptString());
+    readline.prompt();
   };
 
   // Shift+Tab detection - cycle permission mode
   const handleCycleMode = (): void => {
     if (busy) return;
     store.cyclePermissionMode();
-    // Clear current prompt area and redraw with new mode
-    process.stdout.write('\x1b[2K\r'); // Clear current line
-    process.stdout.write('\x1b[1A\x1b[2K\r'); // Clear footer line above
-    prompt();
-    drawFooter();
+    // Clear current prompt line and redraw
+    process.stdout.write('\x1b[2K\r');
+    readline.setPrompt(buildPromptString());
+    readline.prompt();
   };
 
   // Listen for keypress events (before readline processes them)
@@ -133,9 +147,8 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
   }
   console.log();
 
-  // Draw initial prompt with separator and footer
-  prompt();
-  drawFooter();
+  // Initial prompt
+  showPrompt();
 
   /** Run handler and re-enable prompt after completion */
   async function runHandler(parsed: { isCommand: boolean; name: string; args: string }): Promise<void> {
@@ -165,16 +178,14 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
     }
 
     busy = false;
-    prompt();
-    drawFooter();
+    showPrompt();
   }
 
   readline.on('line', (line: string) => {
     const parsed = parseInput(line);
     if (!parsed.isCommand && !parsed.args) {
-      // 空输入（只有空格） → 重新打印 prompt + footer
-      prompt();
-      drawFooter();
+      // 空输入（只有空格） → 重新打印 prompt
+      showPrompt();
       return;
     }
 

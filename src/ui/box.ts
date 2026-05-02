@@ -112,7 +112,28 @@ export function renderHeaderBox(config: HeaderBoxConfig): string {
 }
 
 /**
- * Renders the input separator line with prompt
+ * Renders the full prompt area with separators
+ * Returns { topSep, promptLine, bottomSep }
+ */
+export function renderPromptArea(modeText?: string): { topSep: string; promptLine: string; bottomSep: string } {
+  const terminalWidth = process.stdout.columns || 80;
+  const modeIndicator = modeText ? ` [${modeText}]` : '';
+  const promptChar = '❯';
+
+  // Top separator line
+  const topSep = DIM(SEP_LINE.repeat(terminalWidth));
+
+  // Prompt line: centered ❯ with mode indicator
+  const promptLine = `${ACCENT(promptChar)}${modeIndicator ? DIM(modeIndicator) : ''}`;
+
+  // Bottom separator line
+  const bottomSep = DIM(SEP_LINE.repeat(terminalWidth));
+
+  return { topSep, promptLine, bottomSep };
+}
+
+/**
+ * Renders the input separator line with prompt (legacy, single-line version)
  */
 export function renderPromptSeparator(modeText?: string): string {
   const terminalWidth = process.stdout.columns || 80;
