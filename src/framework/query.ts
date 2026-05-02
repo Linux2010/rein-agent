@@ -10,7 +10,8 @@
  */
 
 import type { LLMService, Message, StreamCallbacks, Tool } from '../services/llm';
-import type { OpenHorseTool } from './tool';
+import type { OpenHorseTool, ToolContext, PermissionResult } from './tool';
+import type { PermissionMode } from '../commands/types';
 import { toOpenAITools } from './tool';
 
 // ============================================================================
@@ -43,6 +44,10 @@ export interface QueryParams {
   abortSignal?: AbortSignal;
   /** Streaming callbacks (onChunk writes to stdout, etc.) */
   streamCallbacks?: StreamCallbacks;
+  /** Permission mode for tool execution */
+  permissionMode?: PermissionMode;
+  /** Tool execution context */
+  toolContext?: ToolContext;
 }
 
 // ============================================================================
@@ -125,7 +130,35 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
         };
 
         const start = Date.now();
-        const result = await toolExecutor(tc.function.name, args);
+
+        // Permission check before execution
+        let result: string;
+        const tool = tools.find(t => t.name === tc.function.name);
+
+        if (tool?.checkPermissions && params.toolContext) {
+          const perm = tool.checkPermissions(args, params.toolContext);
+
+          if (perm.behavior === 'deny') {
+            result = JSON.stringify({
+              success: false,
+              error: perm.reason || 'Permission denied',
+            });
+          } else if (perm.behavior === 'ask' && params.permissionMode === 'default') {
+            // In default mode, ask user for destructive operations
+            // For now, deny with message (future: interactive prompt)
+            result = JSON.stringify({
+              success: false,
+              error: `Tool ${tc.function.name} requires user confirmation. Use 'acceptEdits' or 'auto' mode to allow.`,
+            });
+          } else {
+            // Allow: either permission is 'allow' or mode is 'acceptEdits'/'auto'
+            result = await toolExecutor(tc.function.name, args);
+          }
+        } else {
+          // No permission check defined, execute directly
+          result = await toolExecutor(tc.function.name, args);
+        }
+
         const duration = Date.now() - start;
 
         yield {
