@@ -194,9 +194,44 @@ function showConfig(ctx: CommandContext): CommandResult {
 }
 
 function handleModel(ctx: CommandContext, args: string): CommandResult {
-  if (!args) {
+  // 模型别名映射
+  const MODEL_ALIASES: Record<string, string> = {
+    'opus': 'claude-opus-4-7',
+    'sonnet': 'claude-sonnet-4-6',
+    'haiku': 'claude-haiku-4-5-20251001',
+    'claude': 'claude-sonnet-4-6',
+    'gpt4': 'gpt-4o',
+    'gpt4o': 'gpt-4o',
+    'gpt35': 'gpt-3.5-turbo',
+    'qwen': 'qwen3.5-plus',
+  };
+
+  // 可用模型列表
+  const AVAILABLE_MODELS = [
+    { name: 'claude-opus-4-7', alias: 'opus', provider: 'Anthropic' },
+    { name: 'claude-sonnet-4-6', alias: 'sonnet', provider: 'Anthropic' },
+    { name: 'claude-haiku-4-5-20251001', alias: 'haiku', provider: 'Anthropic' },
+    { name: 'gpt-4o', alias: 'gpt4o', provider: 'OpenAI' },
+    { name: 'gpt-3.5-turbo', alias: 'gpt35', provider: 'OpenAI' },
+    { name: 'qwen3.5-plus', alias: 'qwen', provider: 'Alibaba Cloud' },
+    { name: 'glm-5', alias: 'glm', provider: 'Zhipu' },
+  ];
+
+  const trimmedArgs = args.trim().toLowerCase();
+
+  // 显示当前模型
+  if (!args || trimmedArgs === '?' || trimmedArgs === 'info') {
+    console.log();
     if (ctx.llm) {
-      console.log(DIM(`Current model: ${BRAND(ctx.llm.getModel())}`));
+      const currentModel = ctx.llm.getModel();
+      const aliasEntry = AVAILABLE_MODELS.find(m => m.name === currentModel || m.alias === currentModel);
+      console.log(HEADER('Current Model'));
+      console.log(DIM('─'.repeat(40)));
+      console.log(`  Model    ${BRAND(currentModel)}`);
+      if (aliasEntry) {
+        console.log(`  Alias    ${ACCENT(aliasEntry.alias)}`);
+        console.log(`  Provider ${DIM(aliasEntry.provider)}`);
+      }
     } else {
       console.log(ERROR('LLM not initialized. Set OPENHORSE_API_KEY first.'));
     }
@@ -204,15 +239,53 @@ function handleModel(ctx: CommandContext, args: string): CommandResult {
     return { success: true };
   }
 
+  // 显示模型列表
+  if (trimmedArgs === 'list' || trimmedArgs === 'ls') {
+    console.log();
+    console.log(HEADER('Available Models'));
+    console.log(DIM('─'.repeat(40)));
+    const currentModel = ctx.llm?.getModel() || '';
+    for (const m of AVAILABLE_MODELS) {
+      const isCurrent = m.name === currentModel || m.alias === currentModel;
+      const marker = isCurrent ? SUCCESS('●') : DIM('○');
+      console.log(`  ${marker} ${ACCENT(m.name)} ${DIM(`(${m.alias})`)} ${isCurrent ? BRAND('(current)') : ''}`);
+      console.log(`      ${DIM(m.provider)}`);
+    }
+    console.log();
+    console.log(DIM('Use /model <name|alias> to switch, e.g. /model sonnet'));
+    console.log();
+    return { success: true };
+  }
+
+  // 显示帮助
+  if (trimmedArgs === 'help') {
+    console.log();
+    console.log(HEADER('/model Command Help'));
+    console.log(DIM('─'.repeat(40)));
+    console.log();
+    console.log(`  ${ACCENT('/model')}           Show current model`);
+    console.log(`  ${ACCENT('/model list')}      Show available models`);
+    console.log(`  ${ACCENT('/model <name>')}    Switch to specific model`);
+    console.log(`  ${ACCENT('/model <alias>')}   Switch using alias (opus, sonnet, haiku)`);
+    console.log();
+    console.log(DIM('Aliases: opus, sonnet, haiku, gpt4o, qwen, glm'));
+    console.log();
+    return { success: true };
+  }
+
+  // 设置模型
   if (!ctx.llm) {
     console.log(ERROR('LLM not initialized. Set OPENHORSE_API_KEY first.'));
     console.log();
     return { success: false };
   }
 
-  ctx.llm.setModel(args);
-  ctx.store.setState({ currentModel: args });
-  console.log(SUCCESS(`✔ Model changed to ${BRAND(args)}`));
+  // 解析别名
+  const resolvedModel = MODEL_ALIASES[trimmedArgs] || args.trim();
+
+  ctx.llm.setModel(resolvedModel);
+  ctx.store.setState({ currentModel: resolvedModel });
+  console.log(SUCCESS(`✔ Model changed to ${BRAND(resolvedModel)}`));
   console.log();
   return { success: true };
 }
@@ -459,6 +532,100 @@ async function handleExit(ctx: CommandContext): Promise<CommandResult> {
   process.exit(0);
 }
 
+function handleCost(ctx: CommandContext): CommandResult {
+  console.log();
+  console.log(HEADER('Session Cost'));
+  console.log(DIM('─'.repeat(40)));
+
+  const usage = ctx.store.getSnapshot().tokenUsage;
+  const history = ctx.store.getSnapshot().conversationHistory;
+
+  console.log();
+  if (usage) {
+    console.log(`  Input tokens    ${ACCENT(usage.promptTokens.toLocaleString())}`);
+    console.log(`  Output tokens   ${ACCENT(usage.completionTokens.toLocaleString())}`);
+    console.log(`  Total tokens    ${DIM((usage.promptTokens + usage.completionTokens).toLocaleString())}`);
+  } else {
+    console.log(DIM('  No token usage recorded yet'));
+  }
+
+  console.log();
+  console.log(`  Messages        ${DIM(history.length.toString())}`);
+  console.log(`  Turns           ${DIM(Math.floor(history.length / 2).toString())}`);
+  console.log();
+  console.log(DIM('Note: Cost estimates depend on provider pricing'));
+  console.log();
+  return { success: true };
+}
+
+function handleClearHistory(ctx: CommandContext): CommandResult {
+  const history = ctx.store.getSnapshot().conversationHistory;
+
+  if (history.length === 0) {
+    console.log(DIM('Conversation history is already empty'));
+    console.log();
+    return { success: true };
+  }
+
+  ctx.store.resetConversation();
+  console.log(SUCCESS(`✔ Cleared ${history.length} messages from conversation history`));
+  console.log(DIM('  Configuration and system state preserved'));
+  console.log();
+  return { success: true };
+}
+
+function handleUsage(ctx: CommandContext): CommandResult {
+  console.log();
+  console.log(HEADER('Usage Statistics'));
+  console.log(DIM('─'.repeat(40)));
+
+  const snapshot = ctx.store.getSnapshot();
+  const usage = snapshot.tokenUsage;
+  const history = snapshot.conversationHistory;
+
+  console.log();
+
+  // Token usage
+  console.log(HEADER('  Tokens:'));
+  if (usage) {
+    console.log(`    Input       ${ACCENT(usage.promptTokens.toLocaleString())}`);
+    console.log(`    Output      ${ACCENT(usage.completionTokens.toLocaleString())}`);
+    const total = usage.promptTokens + usage.completionTokens;
+    console.log(`    Total       ${DIM(total.toLocaleString())}`);
+    const ratio = usage.completionTokens / usage.promptTokens;
+    console.log(`    Ratio       ${DIM(ratio.toFixed(2))} (output/input)`);
+  } else {
+    console.log(DIM('    No token usage recorded'));
+  }
+
+  console.log();
+
+  // Conversation stats
+  console.log(HEADER('  Conversation:'));
+  console.log(`    Messages    ${DIM(history.length.toString())}`);
+  console.log(`    Turns       ${DIM(Math.floor(history.length / 2).toString())}`);
+
+  // Count by role
+  const byRole = { user: 0, assistant: 0, system: 0, tool: 0 };
+  for (const msg of history) {
+    byRole[msg.role] = (byRole[msg.role] || 0) + 1;
+  }
+  console.log(`    User msgs   ${DIM(byRole.user.toString())}`);
+  console.log(`    Assistant   ${DIM(byRole.assistant.toString())}`);
+
+  console.log();
+
+  // Model info
+  console.log(HEADER('  Model:'));
+  console.log(`    Current     ${BRAND(snapshot.currentModel)}`);
+  if (ctx.llm) {
+    console.log(`    Active      ${ACCENT(ctx.llm.getModel())}`);
+  }
+
+  console.log();
+  return { success: true };
+}
+
 // ============================================================================
 // 命令注册表
 // ============================================================================
@@ -489,6 +656,13 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: 'clear-history',
+    aliases: ['reset'],
+    description: 'Clear conversation history (keep config)',
+    type: 'builtin',
+    execute: (ctx) => handleClearHistory(ctx),
+  },
+  {
     name: 'exit',
     aliases: ['quit', 'q'],
     description: 'Shutdown and exit',
@@ -496,11 +670,26 @@ const COMMANDS: SlashCommand[] = [
     execute: (ctx) => handleExit(ctx),
   },
 
+  // 成本/用量命令
+  {
+    name: 'cost',
+    description: 'Show session token usage',
+    type: 'builtin',
+    execute: (ctx) => handleCost(ctx),
+  },
+  {
+    name: 'usage',
+    aliases: ['stats'],
+    description: 'Show detailed usage statistics',
+    type: 'builtin',
+    execute: (ctx) => handleUsage(ctx),
+  },
+
   // 配置命令
   {
     name: 'model',
     description: 'Show or change the current model',
-    params: [{ name: 'model', description: 'Model name', required: false }],
+    argumentHint: '[model|list|help]',
     type: 'builtin',
     execute: (ctx, args) => handleModel(ctx, args),
   },

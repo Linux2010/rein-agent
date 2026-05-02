@@ -74,8 +74,13 @@ export function getModeDisplayText(mode: PermissionMode): string {
 export interface SlashCommand {
   name: string;
   aliases?: string[];
+  /** 描述（可以是 getter 函数支持动态） */
   description: string;
+  /** 参数提示（显示在命令名后面） */
+  argumentHint?: string;
   params?: CommandParam[];
   type: CommandType;
+  /** 是否隐藏（不显示在 help 中） */
+  isHidden?: boolean;
   execute(ctx: CommandContext, args: string): Promise<CommandResult> | CommandResult;
 }
