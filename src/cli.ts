@@ -12,7 +12,6 @@
 
 import 'dotenv/config';
 import chalk from 'chalk';
-import figlet from 'figlet';
 import { init, OpenHorseRuntime } from './init';
 import { LLMService } from './services/llm';
 import { TOOLS } from './tools';
@@ -22,13 +21,12 @@ import { findCommand, executeChat } from './commands';
 import { parseInput, createCompleter, buildCommandSuggestions } from './commands/parser';
 import type { CommandContext } from './commands/types';
 import { getModeDisplayText } from './commands/types';
+import { renderHeaderBox, renderPromptSeparator, renderFooterBar } from './ui/box';
 
 // ============================================================================
 // 颜色常量
 // ============================================================================
 
-const BRAND = chalk.hex('#FF6B35');
-const ACCENT = chalk.hex('#00D4AA');
 const DIM = chalk.dim;
 const ERROR = chalk.red;
 const WARN = chalk.yellow;
@@ -46,28 +44,20 @@ let store: Store;
 // ============================================================================
 
 function printBanner(): void {
-  const art = figlet.textSync('OPENHORSE', {
-    font: 'standard',
-    horizontalLayout: 'default',
-    verticalLayout: 'default',
-  });
-
-  console.log(BRAND(art));
-  console.log();
-  console.log(`${ACCENT('OpenHorse, Unleash the Potential.')}`);
-  console.log(DIM('  通用 Agent 驾驭框架  |  Universal Agent Harness Framework'));
-  console.log();
-  console.log(`${DIM('├')} ${DIM('v')} ${chalk.bold('0.1.0')}  ${DIM('│')}  Node ${process.version}  ${DIM('│')}  ${process.platform} ${process.arch}`);
-  console.log();
-}
-
-function printLLMStatus(): void {
   const config = store.getSnapshot().config;
-  if (!isConfigured(config)) {
-    console.log(`${DIM('├')} ${WARN('LLM not configured')} ${DIM('| Set OPENHORSE_API_KEY in .env')}`);
-  } else if (llm) {
-    console.log(`${DIM('├')} ${SUCCESS('LLM ready')} ${DIM('|')} ${BRAND(llm.getModel())}`);
-  }
+  const baseUrl = config.apiBaseUrl || '';
+  const headerBox = renderHeaderBox({
+    provider: baseUrl.includes('anthropic') ? 'Anthropic'
+      : baseUrl.includes('openai') ? 'OpenAI'
+      : baseUrl.includes('dashscope') ? 'Alibaba Cloud'
+      : 'Custom',
+    model: config.model,
+    endpoint: baseUrl,
+    status: llm ? 'ready' : 'loading',
+    statusText: llm ? undefined : 'Set OPENHORSE_API_KEY in .env',
+    version: '0.1.0',
+  });
+  console.log(headerBox);
   console.log();
 }
 
@@ -94,21 +84,27 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
   const getPromptWithMode = (): string => {
     const mode = store.getSnapshot().permissionMode;
     const modeText = getModeDisplayText(mode);
-    const modeIndicator = modeText ? DIM(`[${modeText}] `) : '';
-    return modeIndicator + ACCENT('❯ ');
+    return renderPromptSeparator(modeText);
   };
 
   const prompt = () => {
-    process.stdout.write(getPromptWithMode());
+    console.log(getPromptWithMode());
+  };
+
+  // Draw footer after interactions
+  const drawFooter = () => {
+    console.log(renderFooterBar());
   };
 
   // Shift+Tab detection - cycle permission mode
   const handleCycleMode = (): void => {
     if (busy) return;
     store.cyclePermissionMode();
-    // Clear current prompt line and redraw with new mode
-    process.stdout.write('\x1b[2K\r'); // Clear entire line
+    // Clear current prompt area and redraw with new mode
+    process.stdout.write('\x1b[2K\r'); // Clear current line
+    process.stdout.write('\x1b[1A\x1b[2K\r'); // Clear footer line above
     prompt();
+    drawFooter();
   };
 
   // Listen for keypress events (before readline processes them)
@@ -130,14 +126,16 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
 
   console.log(SUCCESS('✔ System initialized successfully'));
   console.log(DIM('  Type /help for available commands, /exit to quit'));
-  console.log(DIM('  Press shift+tab to cycle permission modes (default → acceptEdits → plan → auto)'));
+  console.log(DIM('  Press shift+tab to cycle permission modes'));
   if (!isConfigured(ctx.config)) {
     console.log(WARN('  ⚠ LLM not configured — chat mode unavailable'));
     console.log(DIM('  Set OPENHORSE_API_KEY in .env to enable chat'));
   }
   console.log();
 
+  // Draw initial prompt with separator and footer
   prompt();
+  drawFooter();
 
   /** Run handler and re-enable prompt after completion */
   async function runHandler(parsed: { isCommand: boolean; name: string; args: string }): Promise<void> {
@@ -168,13 +166,15 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
 
     busy = false;
     prompt();
+    drawFooter();
   }
 
   readline.on('line', (line: string) => {
     const parsed = parseInput(line);
     if (!parsed.isCommand && !parsed.args) {
-      // 空输入（只有空格） → 重新打印 prompt
+      // 空输入（只有空格） → 重新打印 prompt + footer
       prompt();
+      drawFooter();
       return;
     }
 
@@ -275,9 +275,6 @@ async function main(): Promise<void> {
     currentModel: cliConfig.model,
   });
 
-  // 打印欢迎界面（需要 store 已初始化）
-  printBanner();
-
   // 检查 LLM 配置
   if (isConfigured(cliConfig)) {
     try {
@@ -293,8 +290,8 @@ async function main(): Promise<void> {
     }
   }
 
-  // 打印 LLM 状态
-  printLLMStatus();
+  // 打印欢迎界面（LLM 已初始化，显示正确状态）
+  printBanner();
 
   // 初始化系统
   const config = store.getSnapshot().config;
