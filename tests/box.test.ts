@@ -1,4 +1,4 @@
-import { toolLine } from '../src/ui/box';
+import { toolLine, renderHeaderBox, renderPromptSeparator, renderFooterBar } from '../src/ui/box';
 
 describe('toolLine', () => {
   test('includes tool name in output', () => {
@@ -47,5 +47,104 @@ describe('toolLine', () => {
   test('handles string arg values', () => {
     const line = toolLine('some_tool', { value: 'hello world' }, true);
     expect(line).toContain('hello world');
+  });
+});
+
+describe('renderHeaderBox', () => {
+  test('renders header box with provider info', () => {
+    const box = renderHeaderBox({
+      provider: 'Anthropic',
+      model: 'claude-3',
+      endpoint: 'https://api.anthropic.com',
+      status: 'ready',
+      version: '0.1.0',
+    });
+    expect(box).toContain('Provider');
+    expect(box).toContain('Anthropic');
+    expect(box).toContain('Model');
+    expect(box).toContain('claude-3');
+    expect(box).toContain('Endpoint');
+  });
+
+  test('renders double-line box borders', () => {
+    const box = renderHeaderBox({
+      provider: 'Test',
+      model: 'test-model',
+      endpoint: 'http://localhost',
+      status: 'ready',
+      version: '1.0',
+    });
+    expect(box).toContain('╔');
+    expect(box).toContain('╗');
+    expect(box).toContain('╚');
+    expect(box).toContain('╝');
+    expect(box).toContain('╠');
+    expect(box).toContain('╣');
+  });
+
+  test('truncates long endpoints', () => {
+    const longEndpoint = 'https://' + 'a'.repeat(100) + '.com';
+    const box = renderHeaderBox({
+      provider: 'Test',
+      model: 'test',
+      endpoint: longEndpoint,
+      status: 'ready',
+      version: '1.0',
+    });
+    expect(box).toContain('...');
+  });
+
+  test('shows ready status', () => {
+    const box = renderHeaderBox({
+      provider: 'Test',
+      model: 'test',
+      endpoint: 'http://localhost',
+      status: 'ready',
+      version: '1.0',
+    });
+    expect(box).toContain('Ready');
+  });
+
+  test('shows loading status', () => {
+    const box = renderHeaderBox({
+      provider: 'Test',
+      model: 'test',
+      endpoint: 'http://localhost',
+      status: 'loading',
+      statusText: 'Initializing...',
+      version: '1.0',
+    });
+    expect(box).toContain('Initializing');
+  });
+});
+
+describe('renderPromptSeparator', () => {
+  test('renders separator with prompt', () => {
+    const sep = renderPromptSeparator();
+    expect(sep).toContain('❯');
+    expect(sep).toContain('─');
+  });
+
+  test('includes mode text when provided', () => {
+    const sep = renderPromptSeparator('plan mode on');
+    expect(sep).toContain('[plan mode on]');
+  });
+});
+
+describe('renderFooterBar', () => {
+  test('renders shortcuts hint', () => {
+    const footer = renderFooterBar();
+    expect(footer).toContain('? for shortcuts');
+  });
+
+  test('includes file context when provided', () => {
+    const footer = renderFooterBar('test.ts');
+    expect(footer).toContain('In');
+    expect(footer).toContain('test.ts');
+  });
+
+  test('includes effort when provided', () => {
+    const footer = renderFooterBar(undefined, 'high');
+    expect(footer).toContain('high');
   });
 });

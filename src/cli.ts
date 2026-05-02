@@ -2,11 +2,12 @@
  * openhorse - 命令行交互入口
  *
  * 提供交互式终端体验：
- *   - 欢迎界面（ASCII Art）
+ *   - 欢迎界面（Header Box with Provider/Model/Endpoint）
  *   - 系统初始化与状态展示
  *   - Slash 命令（/help, /status, /clear, /exit 等）
  *   - 非 `/` 前缀输入直接作为 chat 消息
  *   - Tab 补全命令名
+ *   - Shift+Tab 模式切换
  */
 
 import 'dotenv/config';
@@ -14,12 +15,13 @@ import chalk from 'chalk';
 import figlet from 'figlet';
 import { init, OpenHorseRuntime } from './init';
 import { LLMService } from './services/llm';
-import { TOOLS, getToolNames } from './tools';
+import { TOOLS } from './tools';
 import { loadConfig, isConfigured } from './services/config';
 import { Store } from './framework';
 import { findCommand, executeChat } from './commands';
 import { parseInput, createCompleter, buildCommandSuggestions } from './commands/parser';
 import type { CommandContext } from './commands/types';
+import { getModeDisplayText } from './commands/types';
 
 // ============================================================================
 // 颜色常量
@@ -76,6 +78,9 @@ function printLLMStatus(): void {
 async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
   const rl = await import('readline');
 
+  // Enable keypress events for shift+tab detection
+  rl.emitKeypressEvents(process.stdin);
+
   const readline = rl.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -85,9 +90,34 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
   // Prevent double-processing while async commands run
   let busy = false;
 
-  const prompt = () => {
-    process.stdout.write(ACCENT('❯ '));
+  // Mode indicator in prompt
+  const getPromptWithMode = (): string => {
+    const mode = store.getSnapshot().permissionMode;
+    const modeText = getModeDisplayText(mode);
+    const modeIndicator = modeText ? DIM(`[${modeText}] `) : '';
+    return modeIndicator + ACCENT('❯ ');
   };
+
+  const prompt = () => {
+    process.stdout.write(getPromptWithMode());
+  };
+
+  // Shift+Tab detection - cycle permission mode
+  const handleCycleMode = (): void => {
+    if (busy) return;
+    store.cyclePermissionMode();
+    // Clear current prompt line and redraw with new mode
+    process.stdout.write('\x1b[2K\r'); // Clear entire line
+    prompt();
+  };
+
+  // Listen for keypress events (before readline processes them)
+  process.stdin.on('keypress', (_str: string, key: any) => {
+    // Shift+Tab: \x1b[Z sequence or key.name === 'tab' with shift
+    if (key.sequence === '\x1b[Z' || (key.name === 'tab' && key.shift)) {
+      handleCycleMode();
+    }
+  });
 
   // 构建命令上下文
   const ctx: CommandContext = {
@@ -100,7 +130,7 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
 
   console.log(SUCCESS('✔ System initialized successfully'));
   console.log(DIM('  Type /help for available commands, /exit to quit'));
-  console.log(DIM(`  Tools available: ${getToolNames()}`));
+  console.log(DIM('  Press shift+tab to cycle permission modes (default → acceptEdits → plan → auto)'));
   if (!isConfigured(ctx.config)) {
     console.log(WARN('  ⚠ LLM not configured — chat mode unavailable'));
     console.log(DIM('  Set OPENHORSE_API_KEY in .env to enable chat'));
@@ -235,8 +265,6 @@ async function commandMode(runtime: OpenHorseRuntime): Promise<void> {
 // ============================================================================
 
 async function main(): Promise<void> {
-  printBanner();
-
   // 加载环境变量
   const cliConfig = loadConfig();
 
@@ -246,6 +274,9 @@ async function main(): Promise<void> {
     tools: TOOLS,
     currentModel: cliConfig.model,
   });
+
+  // 打印欢迎界面（需要 store 已初始化）
+  printBanner();
 
   // 检查 LLM 配置
   if (isConfigured(cliConfig)) {

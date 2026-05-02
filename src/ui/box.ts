@@ -2,11 +2,19 @@
  * openhorse - UI 组件
  *
  * 输出流设计：
- *   ❯ hello                  ← readline prompt + 用户输入
- *    ⠋ Thinking (0.3s)       ← spinner 在单独行
- *   Here's the answer...      ← 响应流式输出（spinner 行被清除，响应从新行开始）
- *   tokens: 22+242  qwen3.5-plus  ← 统计
- *   ❯                  ← 下一轮
+ *   ╔════════════════════════════════════════════════════════╗
+ *   │ Provider  Anthropic                                    │
+ *   │ Model     glm-5                                        │
+ *   │ Endpoint  https://coding.dashscope.aliyuncs.c...       │
+ *   ╠════════════════════════════════════════════════════════╣
+ *   │ ● cloud    Ready — type /help to begin                 │
+ *   ╚════════════════════════════════════════════════════════╝
+ *     openhorse v0.1.0
+ *
+ *   ─────────────────────────────────────────────────────────
+ *   ❯
+ *   ─────────────────────────────────────────────────────────
+ *     ? for shortcuts                                         ● In file.ts
  */
 
 import chalk from 'chalk';
@@ -15,14 +23,159 @@ import chalk from 'chalk';
 // 颜色常量
 // ============================================================================
 
+const BRAND = chalk.hex('#FF6B35');
 const ACCENT = chalk.hex('#00D4AA');
 const DIM = chalk.dim;
 const GREEN = chalk.green;
 const RED = chalk.red;
+const YELLOW = chalk.yellow;
+const CYAN = chalk.cyan;
+
+// Box drawing characters (double-line)
+const BOX_TOP_LEFT = '╔';
+const BOX_TOP_RIGHT = '╗';
+const BOX_BOTTOM_LEFT = '╚';
+const BOX_BOTTOM_RIGHT = '╝';
+const BOX_LEFT = '║';
+const BOX_RIGHT = '║';
+const BOX_TOP = '═';
+const BOX_BOTTOM = '═';
+const BOX_MIDDLE_LEFT = '╠';
+const BOX_MIDDLE_RIGHT = '╣';
+const BOX_MIDDLE = '═';
+
+// Single line for separators
+const SEP_LINE = '─';
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 // 使用终端控制码清除整行，避免宽字符（中文）残留
 const CLEAR_LINE = '\x1b[2K\r';
+
+// ============================================================================
+// Header Box
+// ============================================================================
+
+export interface HeaderBoxConfig {
+  provider: string;
+  model: string;
+  endpoint: string;
+  status: 'ready' | 'loading' | 'error' | 'processing';
+  statusText?: string;
+  version: string;
+  width?: number;
+}
+
+/**
+ * Renders a header box with Provider/Model/Endpoint info
+ */
+export function renderHeaderBox(config: HeaderBoxConfig): string {
+  const width = config.width || 60;
+  const innerWidth = width - 4; // Account for ╔ and ╗
+
+  const lines: string[] = [];
+
+  // Top border
+  lines.push(`${BOX_TOP_LEFT}${BOX_TOP.repeat(innerWidth)}${BOX_TOP_RIGHT}`);
+
+  // Provider row
+  const providerVal = truncateRight(config.provider, innerWidth - 12);
+  lines.push(`${BOX_LEFT}${ACCENT(' Provider')}  ${DIM(' ' + providerVal.padEnd(innerWidth - 11))}${BOX_RIGHT}`);
+
+  // Model row
+  const modelVal = truncateRight(config.model, innerWidth - 12);
+  lines.push(`${BOX_LEFT}${ACCENT(' Model')}     ${DIM(' ' + modelVal.padEnd(innerWidth - 11))}${BOX_RIGHT}`);
+
+  // Endpoint row (truncate long URLs)
+  const endpointVal = truncateRight(config.endpoint, innerWidth - 12);
+  lines.push(`${BOX_LEFT}${ACCENT(' Endpoint')}  ${DIM(' ' + endpointVal.padEnd(innerWidth - 11))}${BOX_RIGHT}`);
+
+  // Middle separator
+  lines.push(`${BOX_MIDDLE_LEFT}${BOX_MIDDLE.repeat(innerWidth)}${BOX_MIDDLE_RIGHT}`);
+
+  // Status row
+  const statusIcon = config.status === 'ready' ? GREEN('●')
+    : config.status === 'loading' ? YELLOW('○')
+    : config.status === 'error' ? RED('●')
+    : config.status === 'processing' ? ACCENT('◌')
+    : DIM('○');
+  const statusText = config.statusText || 'Ready — type /help to begin';
+  const statusVal = `${statusIcon} cloud    ${DIM(statusText)}`;
+  lines.push(`${BOX_LEFT}${DIM(' ' + statusVal.padEnd(innerWidth - 1))}${BOX_RIGHT}`);
+
+  // Bottom border
+  lines.push(`${BOX_BOTTOM_LEFT}${BOX_BOTTOM.repeat(innerWidth)}${BOX_BOTTOM_RIGHT}`);
+
+  // Version line
+  lines.push(`  ${BRAND('openhorse')} ${DIM('v' + config.version)}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Renders the input separator line with prompt
+ */
+export function renderPromptSeparator(modeText?: string): string {
+  const terminalWidth = process.stdout.columns || 80;
+  const modeIndicator = modeText ? DIM(`[${modeText}] `) : '';
+  const promptChar = ACCENT('❯');
+  const leftSep = SEP_LINE.repeat(10);
+  const rightSepLength = terminalWidth - 12 - (modeText ? modeText.length + 3 : 0);
+  const rightSep = SEP_LINE.repeat(Math.max(0, rightSepLength));
+
+  return `${DIM(leftSep)} ${promptChar}${modeIndicator} ${DIM(rightSep)}`;
+}
+
+/**
+ * Renders the footer bar with shortcuts and context
+ */
+export function renderFooterBar(contextFile?: string, effort?: string): string {
+  const terminalWidth = process.stdout.columns || 80;
+
+  // Left side: shortcuts hint
+  const shortcuts = DIM('? for shortcuts');
+
+  // Right side: file context and effort
+  let rightSide = '';
+  if (contextFile) {
+    const fileIndicator = truncateLeft(contextFile, 30);
+    rightSide += `${ACCENT('⧉')} ${DIM('In ' + fileIndicator)}`;
+  }
+  if (effort) {
+    rightSide += `  ${ACCENT('●')} ${DIM(effort)}`;
+  }
+
+  // Calculate spacing
+  const leftLen = stringWidth(shortcuts);
+  const rightLen = stringWidth(rightSide);
+  const spacing = Math.max(1, terminalWidth - leftLen - rightLen - 2);
+
+  return `  ${shortcuts}${' '.repeat(spacing)}${rightSide}`;
+}
+
+/**
+ * Truncate string from right side, adding ... if truncated
+ */
+function truncateRight(str: string, maxLen: number): string {
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen - 3) + '...';
+}
+
+/**
+ * Truncate string from left side, adding ... if truncated
+ */
+function truncateLeft(str: string, maxLen: number): string {
+  if (str.length <= maxLen) return str;
+  return '...' + str.slice(-(maxLen - 3));
+}
+
+/**
+ * Get visible width of string (ANSI codes excluded)
+ */
+function stringWidth(str: string): number {
+  // Remove ANSI escape codes
+  const clean = str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+  return clean.length;
+}
 
 // ============================================================================
 // Spinner
