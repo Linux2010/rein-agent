@@ -1,5 +1,31 @@
 # OpenHorse Todo List
 
+## Phase 3 - CLI 实时交互 ✅ 已完成
+
+- [x] 研究 OpenClaude 的 PromptInput 实现（React + Ink）
+- [x] 实现 keypress 事件处理（字符级输入）
+- [x] 创建建议渲染模块（src/ui/suggestions.ts）
+- [x] 集成 "/" 实时命令建议显示
+
+### 完成详情
+
+**提交**: [2779252](https://github.com/Linux2010/openhorse/commit/2779252)
+
+**功能**:
+- 输入 "/" 时显示所有命令列表
+- 输入 "/m" 等部分命令时显示匹配建议
+- Backspace/Escape 实时更新建议
+- Enter 提交命令执行
+
+**技术实现**:
+- 使用 `rl.emitKeypressEvents` 启用字符级输入
+- 使用 muted Writable stream 控制 readline 输出
+- ANSI escape codes 控制光标和清屏
+
+**测试**: 134 passed ✅
+
+---
+
 ## Phase 2 - 工具系统 ✅ 已完成
 
 - [x] 添加 Edit 工具 - 实现精确字符串替换（类似 OpenClaude 的 Edit tool）

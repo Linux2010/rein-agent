@@ -18,11 +18,12 @@ import { LLMService } from './services/llm';
 import { TOOLS } from './tools';
 import { loadConfig, isConfigured } from './services/config';
 import { Store } from './framework';
-import { findCommand, executeChat } from './commands';
+import { findCommand, executeChat, getCommandNames } from './commands';
 import { parseInput, createCompleter, buildCommandSuggestions } from './commands/parser';
 import type { CommandContext } from './commands/types';
 import { getModeDisplayText } from './commands/types';
 import { renderHeaderBox, renderFooterBar } from './ui/box';
+import { updateSuggestions, clearSuggestions, redrawInput, getSuggestionHeight } from './ui/suggestions';
 
 // ============================================================================
 // 颜色常量
@@ -80,13 +81,26 @@ function printBanner(): void {
 
 async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
   const rl = await import('readline');
+  const { Writable } = await import('stream');
 
-  // Enable keypress events for shift+tab detection
+  // 输入缓冲区（用于实时显示）
+  let currentInput = '';
+
+  // 启用 keypress 事件
   rl.emitKeypressEvents(process.stdin);
 
+  // 自定义输出流（用于控制 readline 输出）
+  const mutedOutput = new Writable({
+    write: (chunk, encoding, callback) => {
+      // 只允许特定输出通过
+      callback();
+    },
+  });
+
+  // Create readline with muted output for custom rendering
   const readline = rl.createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output: mutedOutput,
     completer: createCompleter(),
   });
 
@@ -133,13 +147,78 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
     readline.prompt();
   };
 
-  // Listen for keypress events (before readline processes them)
-  process.stdin.on('keypress', (_str: string, key: any) => {
-    // Shift+Tab: \x1b[Z sequence or key.name === 'tab' with shift
+  // Real-time input handling for slash command suggestions
+  const handleKeyPress = (str: string, key: any): void => {
+    // Skip if busy processing a command
+    if (busy) return;
+
+    // Shift+Tab: cycle permission mode
     if (key.sequence === '\x1b[Z' || (key.name === 'tab' && key.shift)) {
       handleCycleMode();
+      return;
     }
-  });
+
+    // Ctrl+C: exit
+    if (key.ctrl && key.name === 'c') {
+      console.log();
+      console.log(DIM('Shutting down...'));
+      runtime.shutdown().then(() => {
+        console.log(SUCCESS('Goodbye! 🐴'));
+        process.exit(0);
+      });
+      return;
+    }
+
+    // Escape: clear suggestions and input
+    if (key.escape) {
+      clearSuggestions();
+      currentInput = '';
+      redrawInput('', getModeIndicator());
+      return;
+    }
+
+    // Enter: submit input
+    if (key.return) {
+      clearSuggestions();
+      const inputToSubmit = currentInput.trim();
+      currentInput = '';
+      if (inputToSubmit) {
+        const parsed = parseInput(inputToSubmit);
+        runHandler(parsed);
+      } else {
+        showPrompt();
+      }
+      return;
+    }
+
+    // Backspace: delete last character
+    if (key.backspace || key.delete) {
+      if (currentInput.length > 0) {
+        currentInput = currentInput.slice(0, -1);
+        clearSuggestions();
+        redrawInput(currentInput, getModeIndicator());
+        // Show suggestions if input starts with /
+        if (currentInput.startsWith('/')) {
+          updateSuggestions(currentInput);
+        }
+      }
+      return;
+    }
+
+    // Regular character: add to input
+    if (str && !key.ctrl && !key.meta) {
+      currentInput += str;
+      clearSuggestions();
+      redrawInput(currentInput, getModeIndicator());
+      // Show suggestions if input starts with /
+      if (currentInput.startsWith('/')) {
+        updateSuggestions(currentInput);
+      }
+    }
+  };
+
+  // Listen for keypress events (before readline processes them)
+  process.stdin.on('keypress', handleKeyPress);
 
   // 构建命令上下文
   const ctx: CommandContext = {
@@ -193,20 +272,9 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
     showPrompt();
   }
 
-  readline.on('line', (line: string) => {
-    const parsed = parseInput(line);
-    if (!parsed.isCommand && !parsed.args) {
-      // 空输入（只有空格） → 重新打印 prompt
-      showPrompt();
-      return;
-    }
-
-    if (busy) {
-      // 正在处理中，忽略输入
-      return;
-    }
-
-    runHandler(parsed);
+  readline.on('line', (_line: string) => {
+    // Input is handled via keypress events, this is just to keep readline active
+    // for completer/close events
   });
 
   readline.on('close', () => {
