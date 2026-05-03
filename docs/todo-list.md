@@ -25,6 +25,43 @@
 
 ---
 
+### 配置目录 ~/.openhorse ✅ 已完成
+
+- [x] config-dir.ts - 配置目录路径管理 (支持 OPENHORSE_CONFIG_DIR 环境变量)
+- [x] global-config.ts - 全局配置加载/保存 (openhorse.json)
+- [x] session-storage.ts - 会话持久化 (JSONL 格式)
+- [x] memory.ts - Memory 文件加载 (User/Project/Local 层级)
+- [x] config.ts 重构 - 合并 GlobalConfig + 环境变量
+- [x] CLI 集成 - 启动初始化、会话创建
+
+**新增文件**:
+- `src/services/config-dir.ts` - 配置目录路径管理
+- `src/services/global-config.ts` - 全局配置加载/保存
+- `src/services/session-storage.ts` - 会话持久化 (JSONL)
+- `src/services/memory.ts` - Memory 文件加载
+
+**修改文件**:
+- `src/services/config.ts` - 合并 GlobalConfig + 环境变量优先级
+- `src/cli.ts` - 启动初始化 ensureConfigDir、createSession
+
+**目录结构**:
+```
+~/.openhorse/
+├── openhorse.json         # 全局配置
+├── OPENHORSE.md           # 用户级 memory
+├── history.jsonl          # 命令历史
+├── sessions/              # 会话数据
+│   ├── {id}.json          # 会话元数据
+│   └── {id}.jsonl         # 会话对话记录
+├── projects/              # 项目配置
+├── cost/                  # 成本记录
+└── cache/                 # 缓存数据
+```
+
+**测试**: 196 passed ✅
+
+---
+
 ### 待完成
 
 - [ ] Task 链 - 基础抽象

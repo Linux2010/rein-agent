@@ -17,6 +17,9 @@ import { init, OpenHorseRuntime } from './init';
 import { LLMService } from './services/llm';
 import { TOOLS } from './tools';
 import { loadConfig, isConfigured } from './services/config';
+import { ensureConfigDir } from './services/config-dir';
+import { recordFirstStartTime, incrementSessionCount } from './services/global-config';
+import { createSession, type SessionMeta } from './services/session-storage';
 import { Store } from './framework';
 import { findCommand, executeChat, getCommandNames } from './commands';
 import { parseInput, createCompleter, buildCommandSuggestions } from './commands/parser';
@@ -68,6 +71,7 @@ function removeLastUnicodeChar(str: string): string {
 
 let llm: LLMService | null = null;
 let store: Store;
+let currentSession: SessionMeta | null = null;
 
 // ============================================================================
 // 欢迎界面
@@ -382,6 +386,12 @@ async function commandMode(runtime: OpenHorseRuntime): Promise<void> {
 // ============================================================================
 
 async function main(): Promise<void> {
+  // 初始化配置目录
+  ensureConfigDir();
+
+  // 记录首次启动
+  recordFirstStartTime();
+
   // 加载环境变量
   const cliConfig = loadConfig();
 
@@ -391,6 +401,10 @@ async function main(): Promise<void> {
     tools: TOOLS,
     currentModel: cliConfig.model,
   });
+
+  // 创建新会话
+  currentSession = createSession(process.cwd(), cliConfig.model);
+  incrementSessionCount();
 
   // 检查 LLM 配置
   if (isConfigured(cliConfig)) {
