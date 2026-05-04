@@ -167,6 +167,8 @@ export class LLMService {
       max_tokens: this.config.maxTokens,
       temperature: this.config.temperature,
       stream: true,
+      // Request usage in stream response (OpenAI API requirement)
+      stream_options: { include_usage: true },
     };
 
     if (tools && tools.length > 0) {
@@ -179,6 +181,7 @@ export class LLMService {
 
     let content = '';
     let usedModel = this.config.model;
+    let usage: { promptTokens: number; completionTokens: number } | undefined;
     const toolCallsMap = new Map<string, {
       id: string;
       type: 'function';
@@ -210,6 +213,14 @@ export class LLMService {
         }
       }
 
+      // Extract usage from final chunk
+      if (chunk.usage) {
+        usage = {
+          promptTokens: chunk.usage.prompt_tokens ?? 0,
+          completionTokens: chunk.usage.completion_tokens ?? 0,
+        };
+      }
+
       if (chunk.model) {
         usedModel = chunk.model;
       }
@@ -220,6 +231,7 @@ export class LLMService {
     return {
       content,
       model: usedModel,
+      usage,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     };
   }
