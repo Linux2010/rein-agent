@@ -62,6 +62,27 @@
 
 ---
 
+### CLI 对话修复 ✅ 已完成
+
+- [x] 修复 LLMService.chatStream - 添加 stream_options 提取 usage
+- [x] 删除重复 /cost 命令定义
+- [x] 合并 handleCost 和 showCost 实现
+- [x] 添加回归测试 - cli-chat.test.ts, llm.test.ts
+
+**提交**: [d8fb7fd](https://github.com/Linux2010/openhorse/commit/d8fb7fd)
+
+**修改文件**:
+- `src/services/llm.ts` - 添加 stream_options: { include_usage: true }
+- `src/commands/index.ts` - 删除重复命令，合并 handleCost
+
+**新增测试**:
+- `tests/cli-chat.test.ts` - Store/Query/CostTracker 集成测试
+- `tests/llm.test.ts` - LLMService 单元测试
+
+**测试**: 207 passed (1 skipped) ✅
+
+---
+
 ### 待完成
 
 - [ ] Task 链 - 基础抽象
