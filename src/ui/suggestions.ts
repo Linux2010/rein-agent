@@ -101,8 +101,8 @@ export function clearSuggestions(): void {
  * @param modeIndicator 模式指示器文本
  */
 export function redrawInput(input: string, modeIndicator: string = ''): void {
-  // 清除当前行
-  process.stdout.write('\x1b[2K\r');
+  // 移动到行首并清除整行
+  process.stdout.write('\r\x1b[2K');
 
   // 绘制 prompt 和输入
   const prompt = ACCENT('❯ ') + DIM(modeIndicator);

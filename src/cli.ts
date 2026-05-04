@@ -163,8 +163,8 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
   // Show prompt with separator (used after command completion)
   const showPrompt = () => {
     drawSeparator();
-    readline.setPrompt(buildPromptString());
-    readline.prompt();
+    // Use process.stdout directly for consistent output
+    process.stdout.write('\r' + ACCENT('❯ ') + DIM(getModeIndicator()));
   };
 
   // Shift+Tab detection - cycle permission mode
@@ -172,9 +172,8 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
     if (busy) return;
     store.cyclePermissionMode();
     // Clear current prompt line and redraw
-    process.stdout.write('\x1b[2K\r');
-    readline.setPrompt(buildPromptString());
-    readline.prompt();
+    process.stdout.write('\r\x1b[2K');
+    process.stdout.write(ACCENT('❯ ') + DIM(getModeIndicator()));
   };
 
   // Real-time input handling for slash command suggestions
@@ -212,6 +211,7 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
       clearSuggestions();
       const inputToSubmit = currentInput.trim();
       currentInput = '';
+      redrawInput('', getModeIndicator()); // Clear input line
       if (inputToSubmit) {
         const parsed = parseInput(inputToSubmit);
         runHandler(parsed);
@@ -276,30 +276,35 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
     if (busy) return;
     busy = true;
 
-    if (parsed.isCommand) {
-      const cmd = findCommand(parsed.name);
-      if (cmd) {
-        const result = await cmd.execute(ctx, parsed.args);
-        if (result.continueAsChat && result.chatInput) {
-          await executeChat(ctx, result.chatInput);
+    try {
+      if (parsed.isCommand) {
+        const cmd = findCommand(parsed.name);
+        if (cmd) {
+          const result = await cmd.execute(ctx, parsed.args);
+          if (result.continueAsChat && result.chatInput) {
+            await executeChat(ctx, result.chatInput);
+          }
+        } else {
+          console.log(ERROR(`Unknown command: /${parsed.name}`));
+          const suggestions = buildCommandSuggestions(parsed.name);
+          if (suggestions.length > 0) {
+            console.log(DIM(`Did you mean: ${suggestions.map(s => `/${s}`).join(', ')}?`));
+          } else {
+            console.log(DIM(`Type /help for available commands.`));
+          }
+          console.log();
         }
       } else {
-        console.log(ERROR(`Unknown command: /${parsed.name}`));
-        const suggestions = buildCommandSuggestions(parsed.name);
-        if (suggestions.length > 0) {
-          console.log(DIM(`Did you mean: ${suggestions.map(s => `/${s}`).join(', ')}?`));
-        } else {
-          console.log(DIM(`Type /help for available commands.`));
-        }
-        console.log();
+        // 非 `/` 前缀 → 直接 chat
+        await executeChat(ctx, parsed.args);
       }
-    } else {
-      // 非 `/` 前缀 → 直接 chat
-      await executeChat(ctx, parsed.args);
+    } catch (err: any) {
+      console.log(ERROR(`Error: ${err.message || String(err)}`));
+      console.log();
+    } finally {
+      busy = false;
+      showPrompt();
     }
-
-    busy = false;
-    showPrompt();
   }
 
   readline.on('line', (_line: string) => {
