@@ -4,15 +4,17 @@
  * 配置加载优先级：
  *   1. 命令行参数
  *   2. 环境变量
- *   3. .env 文件 (dotenv 已在 cli.ts 加载)
+ *   3. ~/.openhorse/openhorse.json (GlobalConfig)
  *   4. 默认值
  */
+
+import { loadGlobalConfig, type GlobalConfig } from './global-config';
 
 // ============================================================================
 // 类型定义
 // ============================================================================
 
-/** OpenHorse 全局配置 */
+/** OpenHorse 运行时配置 */
 export interface OpenHorseCLIConfig {
   /** LLM API Key */
   apiKey: string;
@@ -30,6 +32,8 @@ export interface OpenHorseCLIConfig {
   mode: 'development' | 'production';
   /** 日志级别 */
   logLevel: 'debug' | 'info' | 'warn' | 'error';
+  /** 预算限制 (USD) */
+  budgetLimit?: number;
 }
 
 // ============================================================================
@@ -50,21 +54,31 @@ const DEFAULTS: Partial<OpenHorseCLIConfig> = {
 // ============================================================================
 
 /**
- * 从环境变量加载配置
+ * 从多源加载配置
+ * 优先级：命令行 > 环境变量 > GlobalConfig > 默认值
  */
 export function loadConfig(overrides: Partial<OpenHorseCLIConfig> = {}): OpenHorseCLIConfig {
+  const globalConfig = loadGlobalConfig();
+
   const config: OpenHorseCLIConfig = {
-    apiKey: overrides.apiKey ?? process.env.OPENHORSE_API_KEY ?? '',
-    apiBaseUrl: overrides.apiBaseUrl ?? process.env.OPENHORSE_API_BASE_URL ?? process.env.OPENHORSE_BASE_URL ?? undefined,
-    model: overrides.model ?? process.env.OPENHORSE_MODEL ?? DEFAULTS.model!,
-    maxTokens: overrides.maxTokens ?? parseNum(process.env.OPENHORSE_MAX_TOKENS) ?? DEFAULTS.maxTokens!,
+    apiKey:
+      overrides.apiKey ?? process.env.OPENHORSE_API_KEY ?? globalConfig.apiKey ?? '',
+    apiBaseUrl:
+      overrides.apiBaseUrl ?? process.env.OPENHORSE_API_BASE_URL ?? process.env.OPENHORSE_BASE_URL ?? globalConfig.apiBaseUrl ?? undefined,
+    model:
+      overrides.model ?? process.env.OPENHORSE_MODEL ?? globalConfig.defaultModel ?? DEFAULTS.model!,
+    maxTokens:
+      overrides.maxTokens ?? parseNum(process.env.OPENHORSE_MAX_TOKENS) ?? globalConfig.maxTokens ?? DEFAULTS.maxTokens!,
     temperature:
-      overrides.temperature ??
-      parseNum(process.env.OPENHORSE_TEMPERATURE) ??
-      DEFAULTS.temperature!,
-    name: overrides.name ?? process.env.OPENHORSE_NAME ?? DEFAULTS.name!,
-    mode: (overrides.mode ?? process.env.OPENHORSE_MODE ?? DEFAULTS.mode!) as 'development' | 'production',
-    logLevel: (overrides.logLevel ?? process.env.OPENHORSE_LOG_LEVEL ?? DEFAULTS.logLevel!) as OpenHorseCLIConfig['logLevel'],
+      overrides.temperature ?? parseNum(process.env.OPENHORSE_TEMPERATURE) ?? globalConfig.temperature ?? DEFAULTS.temperature!,
+    name:
+      overrides.name ?? process.env.OPENHORSE_NAME ?? DEFAULTS.name!,
+    mode:
+      (overrides.mode ?? process.env.OPENHORSE_MODE ?? DEFAULTS.mode!) as 'development' | 'production',
+    logLevel:
+      (overrides.logLevel ?? process.env.OPENHORSE_LOG_LEVEL ?? DEFAULTS.logLevel!) as OpenHorseCLIConfig['logLevel'],
+    budgetLimit:
+      overrides.budgetLimit ?? parseNum(process.env.OPENHORSE_BUDGET) ?? globalConfig.budgetLimit,
   };
 
   return config;
@@ -83,7 +97,7 @@ export function isConfigured(config: OpenHorseCLIConfig): boolean {
 export function getConfigErrors(config: OpenHorseCLIConfig): string[] {
   const errors: string[] = [];
   if (!config.apiKey) {
-    errors.push('Missing OPENHORSE_API_KEY. Set it in .env file or environment variable.');
+    errors.push('Missing OPENHORSE_API_KEY. Set it in ~/.openhorse/openhorse.json, .env file, or environment variable.');
   }
   return errors;
 }
@@ -101,6 +115,7 @@ export function getConfigSummary(config: OpenHorseCLIConfig): Record<string, str
     temperature: String(config.temperature),
     mode: config.mode,
     logLevel: config.logLevel,
+    budgetLimit: config.budgetLimit ? `$${config.budgetLimit}` : '(no limit)',
   };
 }
 

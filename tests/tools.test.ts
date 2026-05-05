@@ -23,8 +23,8 @@ function cleanupTestDir() {
 }
 
 describe('TOOLS array', () => {
-  test('contains 4 tools', () => {
-    expect(TOOLS).toHaveLength(4);
+  test('contains 7 tools', () => {
+    expect(TOOLS).toHaveLength(7);
   });
 
   test('includes expected tool names', () => {
@@ -33,6 +33,9 @@ describe('TOOLS array', () => {
     expect(names).toContain('write_file');
     expect(names).toContain('list_files');
     expect(names).toContain('exec_command');
+    expect(names).toContain('edit_file');
+    expect(names).toContain('glob');
+    expect(names).toContain('grep');
   });
 });
 
@@ -186,5 +189,117 @@ describe('getToolNames', () => {
     expect(names).toContain('write_file');
     expect(names).toContain('list_files');
     expect(names).toContain('exec_command');
+    expect(names).toContain('edit_file');
+    expect(names).toContain('glob');
+    expect(names).toContain('grep');
+  });
+});
+
+describe('edit_file tool', () => {
+  const tool = TOOLS.find(t => t.name === 'edit_file')!;
+
+  beforeAll(() => {
+    setupTestDir();
+  });
+
+  afterAll(() => {
+    cleanupTestDir();
+  });
+
+  test('isDestructive returns true', () => {
+    expect(tool.isDestructive?.({})).toBe(true);
+  });
+
+  test('checkPermissions returns ask', () => {
+    const perm = tool.checkPermissions?.({ path: 'test.txt' }, ctx);
+    expect(perm?.behavior).toBe('ask');
+  });
+
+  test('replaces unique string in file', async () => {
+    const testFile = path.join(testDir, 'test-edit.txt');
+    fs.writeFileSync(testFile, 'hello world', 'utf-8');
+
+    const result = await tool.execute({ path: testFile, old_string: 'hello', new_string: 'hi' }, ctx);
+    expect(result.success).toBe(true);
+
+    const content = fs.readFileSync(testFile, 'utf-8');
+    expect(content).toBe('hi world');
+  });
+
+  test('rejects when old_string not found', async () => {
+    const testFile = path.join(testDir, 'test-edit-notfound.txt');
+    fs.writeFileSync(testFile, 'hello world', 'utf-8');
+
+    const result = await tool.execute({ path: testFile, old_string: 'notfound', new_string: 'hi' }, ctx);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not found');
+  });
+
+  test('rejects multiple matches without replace_all', async () => {
+    const testFile = path.join(testDir, 'test-edit-multi.txt');
+    fs.writeFileSync(testFile, 'hello hello hello', 'utf-8');
+
+    const result = await tool.execute({ path: testFile, old_string: 'hello', new_string: 'hi' }, ctx);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('3 times');
+  });
+
+  test('replaces all with replace_all=true', async () => {
+    const testFile = path.join(testDir, 'test-edit-all.txt');
+    fs.writeFileSync(testFile, 'hello hello hello', 'utf-8');
+
+    const result = await tool.execute({ path: testFile, old_string: 'hello', new_string: 'hi', replace_all: true }, ctx);
+    expect(result.success).toBe(true);
+
+    const content = fs.readFileSync(testFile, 'utf-8');
+    expect(content).toBe('hi hi hi');
+  });
+});
+
+describe('glob tool', () => {
+  const tool = TOOLS.find(t => t.name === 'glob')!;
+
+  test('isReadOnly returns true', () => {
+    expect(tool.isReadOnly?.({})).toBe(true);
+  });
+
+  test('isConcurrencySafe returns true', () => {
+    expect(tool.isConcurrencySafe?.({})).toBe(true);
+  });
+
+  test('finds TypeScript files', async () => {
+    const result = await tool.execute({ pattern: '**/*.ts', path: 'src' }, ctx);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('cli.ts');
+  });
+
+  test('returns message when no matches', async () => {
+    const result = await tool.execute({ pattern: '*.xyz', path: 'src' }, ctx);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('No files');
+  });
+});
+
+describe('grep tool', () => {
+  const tool = TOOLS.find(t => t.name === 'grep')!;
+
+  test('isReadOnly returns true', () => {
+    expect(tool.isReadOnly?.({})).toBe(true);
+  });
+
+  test('isConcurrencySafe returns true', () => {
+    expect(tool.isConcurrencySafe?.({})).toBe(true);
+  });
+
+  test('finds pattern in files', async () => {
+    const result = await tool.execute({ pattern: 'openhorse', path: 'package.json' }, ctx);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('openhorse');
+  });
+
+  test('returns message when no matches', async () => {
+    const result = await tool.execute({ pattern: 'notfoundpattern', path: 'src' }, ctx);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('No matches');
   });
 });

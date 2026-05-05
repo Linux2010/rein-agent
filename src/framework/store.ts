@@ -8,6 +8,8 @@
 import type { Message } from '../services/llm';
 import type { OpenHorseTool } from './tool';
 import type { OpenHorseCLIConfig } from '../services/config';
+import type { PermissionMode } from '../commands/types';
+import { CostTracker } from '../core/cost-tracker';
 
 // ============================================================================
 // 状态结构
@@ -20,6 +22,8 @@ export interface AppState {
   isProcessing: boolean;
   currentModel: string;
   tokenUsage: { promptTokens: number; completionTokens: number } | null;
+  permissionMode: PermissionMode;
+  costTracker: CostTracker;
 }
 
 // ============================================================================
@@ -32,11 +36,13 @@ export class Store {
   private state: AppState;
   private listeners: Set<Listener> = new Set();
 
-  constructor(initial: Omit<AppState, 'conversationHistory' | 'isProcessing' | 'tokenUsage'> & Partial<AppState>) {
+  constructor(initial: Omit<AppState, 'conversationHistory' | 'isProcessing' | 'tokenUsage' | 'permissionMode' | 'costTracker'> & Partial<AppState>) {
     this.state = {
       conversationHistory: [],
       isProcessing: false,
       tokenUsage: null,
+      permissionMode: 'default',
+      costTracker: new CostTracker(),
       ...initial,
     } as AppState;
   }
@@ -83,5 +89,18 @@ export class Store {
   /** Convenience: update token usage */
   setTokenUsage(usage: { promptTokens: number; completionTokens: number }): void {
     this.setState({ tokenUsage: usage });
+  }
+
+  /** Convenience: set permission mode */
+  setPermissionMode(mode: PermissionMode): void {
+    this.setState({ permissionMode: mode });
+  }
+
+  /** Convenience: cycle to next permission mode */
+  cyclePermissionMode(): PermissionMode {
+    const { getNextPermissionMode } = require('../commands/types');
+    const nextMode = getNextPermissionMode(this.state.permissionMode);
+    this.setState({ permissionMode: nextMode });
+    return nextMode;
   }
 }

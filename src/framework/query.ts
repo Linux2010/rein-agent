@@ -10,7 +10,9 @@
  */
 
 import type { LLMService, Message, StreamCallbacks, Tool } from '../services/llm';
-import type { OpenHorseTool } from './tool';
+import type { OpenHorseTool, ToolContext, PermissionResult } from './tool';
+import type { PermissionMode } from '../commands/types';
+import type { CostTracker } from '../core/cost-tracker';
 import { toOpenAITools } from './tool';
 
 // ============================================================================
@@ -43,6 +45,12 @@ export interface QueryParams {
   abortSignal?: AbortSignal;
   /** Streaming callbacks (onChunk writes to stdout, etc.) */
   streamCallbacks?: StreamCallbacks;
+  /** Permission mode for tool execution */
+  permissionMode?: PermissionMode;
+  /** Tool execution context */
+  toolContext?: ToolContext;
+  /** Cost tracker for recording usage */
+  costTracker?: CostTracker;
 }
 
 // ============================================================================
@@ -73,6 +81,7 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
     maxTurns = 20,
     abortSignal,
     streamCallbacks,
+    costTracker,
   } = params;
 
   const openaiTools = toOpenAITools(tools) as unknown as Tool[];
@@ -110,12 +119,20 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
     // Handle tool calls
     if (response.toolCalls && response.toolCalls.length > 0) {
       for (const tc of response.toolCalls) {
+        // Ensure arguments is valid JSON (some APIs like DashScope require this)
         let args: Record<string, unknown> = {};
-        try {
-          args = JSON.parse(tc.function.arguments);
-        } catch {
-          // Pass raw string as args fallback
+        const rawArgs = tc.function.arguments || '';
+        if (rawArgs) {
+          try {
+            args = JSON.parse(rawArgs);
+          } catch {
+            // If parse fails, use empty object
+            args = {};
+          }
         }
+
+        // Re-serialize arguments to ensure valid JSON for next API call
+        tc.function.arguments = JSON.stringify(args);
 
         yield {
           type: 'tool_call',
@@ -125,7 +142,35 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
         };
 
         const start = Date.now();
-        const result = await toolExecutor(tc.function.name, args);
+
+        // Permission check before execution
+        let result: string;
+        const tool = tools.find(t => t.name === tc.function.name);
+
+        if (tool?.checkPermissions && params.toolContext) {
+          const perm = tool.checkPermissions(args, params.toolContext);
+
+          if (perm.behavior === 'deny') {
+            result = JSON.stringify({
+              success: false,
+              error: perm.reason || 'Permission denied',
+            });
+          } else if (perm.behavior === 'ask' && params.permissionMode === 'default') {
+            // In default mode, ask user for destructive operations
+            // For now, deny with message (future: interactive prompt)
+            result = JSON.stringify({
+              success: false,
+              error: `Tool ${tc.function.name} requires user confirmation. Use 'acceptEdits' or 'auto' mode to allow.`,
+            });
+          } else {
+            // Allow: either permission is 'allow' or mode is 'acceptEdits'/'auto'
+            result = await toolExecutor(tc.function.name, args);
+          }
+        } else {
+          // No permission check defined, execute directly
+          result = await toolExecutor(tc.function.name, args);
+        }
+
         const duration = Date.now() - start;
 
         yield {
@@ -148,6 +193,12 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
 
     // No tool calls — done
     yield { type: 'message', role: 'assistant', content: response.content };
+
+    // Record usage to cost tracker
+    if (costTracker && response.usage) {
+      costTracker.record(response.usage, { model: response.model });
+    }
+
     yield {
       type: 'complete',
       content: response.content,
