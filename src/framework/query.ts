@@ -119,12 +119,20 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
     // Handle tool calls
     if (response.toolCalls && response.toolCalls.length > 0) {
       for (const tc of response.toolCalls) {
+        // Ensure arguments is valid JSON (some APIs like DashScope require this)
         let args: Record<string, unknown> = {};
-        try {
-          args = JSON.parse(tc.function.arguments);
-        } catch {
-          // Pass raw string as args fallback
+        const rawArgs = tc.function.arguments || '';
+        if (rawArgs) {
+          try {
+            args = JSON.parse(rawArgs);
+          } catch {
+            // If parse fails, use empty object
+            args = {};
+          }
         }
+
+        // Re-serialize arguments to ensure valid JSON for next API call
+        tc.function.arguments = JSON.stringify(args);
 
         yield {
           type: 'tool_call',

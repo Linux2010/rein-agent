@@ -228,6 +228,22 @@ export class LLMService {
 
     const toolCalls = Array.from(toolCallsMap.values());
 
+    // Ensure all tool_calls have valid JSON arguments (required by some APIs like DashScope)
+    for (const tc of toolCalls) {
+      if (!tc.function.arguments || tc.function.arguments.trim() === '') {
+        tc.function.arguments = '{}';
+      } else {
+        try {
+          // Validate and re-serialize to ensure valid JSON
+          const parsed = JSON.parse(tc.function.arguments);
+          tc.function.arguments = JSON.stringify(parsed);
+        } catch {
+          // If invalid JSON, use empty object
+          tc.function.arguments = '{}';
+        }
+      }
+    }
+
     return {
       content,
       model: usedModel,
