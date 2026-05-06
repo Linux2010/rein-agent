@@ -84,6 +84,7 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
     store,
     llm,
     runtime,
+    sessionId: currentSession?.id,
   };
 
   console.log(SUCCESS('✔ System initialized successfully'));

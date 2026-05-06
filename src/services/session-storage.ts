@@ -5,7 +5,7 @@
  * 参考 OpenClaude 的 history.jsonl 和 sessions/ 目录。
  */
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, readdirSync, unlinkSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { ensureConfigDir, getHistoryPath, getSessionMetaPath, getSessionMessagesPath, getSessionsDir } from './config-dir';
@@ -251,5 +251,69 @@ export function readSessionMessages(sessionId: string): SessionMessage[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * 读取会话消息并转换为 Message 格式（用于恢复对话历史）
+ */
+export function loadSessionHistory(sessionId: string): Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string; tool_call_id?: string }> {
+  const messages = readSessionMessages(sessionId);
+  return messages.map(m => ({
+    role: m.role,
+    content: m.content,
+    ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
+  }));
+}
+
+/**
+ * 列出所有会话
+ */
+export function listSessions(limit?: number): SessionMeta[] {
+  ensureConfigDir();
+  const sessionsDir = getSessionsDir();
+
+  if (!existsSync(sessionsDir)) {
+    return [];
+  }
+
+  const files = readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
+  const sessions: SessionMeta[] = [];
+
+  for (const file of files) {
+    try {
+      const content = readFileSync(join(sessionsDir, file), 'utf-8');
+      const session = JSON.parse(content) as SessionMeta;
+      sessions.push(session);
+    } catch {
+      // ignore
+    }
+  }
+
+  // 按开始时间排序（最新的在前）
+  sessions.sort((a, b) => b.startTime - a.startTime);
+
+  return limit ? sessions.slice(0, limit) : sessions;
+}
+
+/**
+ * 删除会话
+ */
+export function deleteSession(sessionId: string): boolean {
+  const metaPath = getSessionMetaPath(sessionId);
+  const messagesPath = getSessionMessagesPath(sessionId);
+
+  let deleted = false;
+
+  if (existsSync(metaPath)) {
+    unlinkSync(metaPath);
+    deleted = true;
+  }
+
+  if (existsSync(messagesPath)) {
+    unlinkSync(messagesPath);
+    deleted = true;
+  }
+
+  return deleted;
 }
 

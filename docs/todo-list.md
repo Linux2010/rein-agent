@@ -83,6 +83,27 @@
 
 ---
 
+### Session 记录与恢复 ✅ 已完成
+
+- [x] `/sessions` 命令 - 列出最近会话 (ID、模型、时间、tokens、成本)
+- [x] `/resume` 命令 - 恢复会话历史 (`/resume` 最后会话 或 `/resume <id>`)
+- [x] handleChat 集成 - 对话消息自动记录到 session `.jsonl`
+- [x] loadSessionHistory - 恢复对话历史格式
+
+**修改文件**:
+- `src/commands/index.ts` - 添加 /sessions 和 /resume 命令处理
+- `src/commands/types.ts` - CommandContext 添加 sessionId
+- `src/cli.ts` - 传递 currentSession.id 到 CommandContext
+- `src/services/session-storage.ts` - 添加 loadSessionHistory, listSessions, deleteSession
+
+**存储格式**:
+- Session 元数据: `~/.openhorse/sessions/{id}.json`
+- Session 对话记录: `~/.openhorse/sessions/{id}.jsonl`
+
+**测试**: 通过 node REPL 验证 ✅
+
+---
+
 ### 待完成
 
 - [ ] Task 链 - 基础抽象

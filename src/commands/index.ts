@@ -14,6 +14,17 @@ import { createSpinner, toolLine } from '../ui/box';
 import { query, getSystemPrompt, type QueryEvent, type PromptContext } from '../framework';
 import { TOOLS, executeTool, getToolNames } from '../tools';
 import type { Message, StreamCallbacks } from '../services/llm';
+import {
+  listSessions,
+  getLastSession,
+  loadSessionHistory,
+  loadSessionMeta,
+  appendSessionMessage,
+  appendSessionMessages,
+  endSession,
+  type SessionMeta,
+  type SessionMessage,
+} from '../services/session-storage';
 
 // ============================================================================
 // 颜色常量
@@ -426,6 +437,15 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
     return { success: false };
   }
 
+  // Record user message to session
+  if (ctx.sessionId) {
+    appendSessionMessage(ctx.sessionId, {
+      role: 'user',
+      content: input,
+      timestamp: Date.now(),
+    });
+  }
+
   ctx.store.addMessage({ role: 'user', content: input });
   const snapshot = ctx.store.getSnapshot();
 
@@ -444,6 +464,8 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
   let finalModel = '';
   let finalUsage: { promptTokens: number; completionTokens: number } | undefined;
   let responseStarted = false;
+  const sessionMessagesToRecord: SessionMessage[] = [];
+  let lastToolCallId = '';
 
   const toolExecutor = async (name: string, args: Record<string, unknown>) => {
     const start = Date.now();
@@ -481,8 +503,26 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           spinner.update(`Turn ${event.turn}...`);
           break;
 
+        case 'tool_call':
+          lastToolCallId = event.callId;
+          // Record tool call for session
+          sessionMessagesToRecord.push({
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+            toolCallId: event.callId,
+          });
+          break;
+
         case 'tool_result':
           spinner.start('Thinking');
+          // Record tool result for session
+          sessionMessagesToRecord.push({
+            role: 'tool',
+            content: event.result,
+            timestamp: Date.now(),
+            toolCallId: lastToolCallId,
+          });
           break;
 
         case 'complete':
@@ -496,6 +536,18 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
 
     if (finalContent) {
       ctx.store.addMessage({ role: 'assistant', content: finalContent });
+      // Record assistant message to session
+      if (ctx.sessionId) {
+        appendSessionMessage(ctx.sessionId, {
+          role: 'assistant',
+          content: finalContent,
+          timestamp: Date.now(),
+        });
+        // Record any tool messages
+        if (sessionMessagesToRecord.length > 0) {
+          appendSessionMessages(ctx.sessionId, sessionMessagesToRecord);
+        }
+      }
     }
 
     if (finalUsage) {
@@ -649,6 +701,105 @@ function handleUsage(ctx: CommandContext): CommandResult {
 }
 
 // ============================================================================
+// Session 命令
+// ============================================================================
+
+function handleSessions(ctx: CommandContext): CommandResult {
+  console.log();
+  console.log(HEADER('Sessions'));
+  console.log(DIM('─'.repeat(40)));
+
+  const sessions = listSessions(10);
+
+  if (sessions.length === 0) {
+    console.log(DIM('  No sessions found'));
+    console.log();
+    return { success: true };
+  }
+
+  console.log();
+  for (const session of sessions) {
+    const startTime = new Date(session.startTime).toLocaleString();
+    const duration = session.endTime
+      ? Math.round((session.endTime - session.startTime) / 1000) + 's'
+      : 'active';
+    const status = session.endTime ? DIM('completed') : ACCENT('active');
+
+    console.log(`  ${status} ${BRAND(session.id.slice(0, 8))} ${DIM(session.model)}`);
+    console.log(`    ${DIM(`Started: ${startTime}`)} ${DIM(`Duration: ${duration}`)}`);
+    console.log(`    ${DIM(`Tokens: ${session.tokenCount}`)} ${DIM(`Cost: $${session.cost.toFixed(4)}`)}`);
+    console.log();
+  }
+
+  console.log(DIM('Use /resume <session-id> to restore a session'));
+  console.log();
+  return { success: true };
+}
+
+function handleResume(ctx: CommandContext, args: string): CommandResult {
+  const sessionId = args.trim();
+
+  if (!sessionId) {
+    // Try to resume last session for current project
+    const lastSession = getLastSession(process.cwd());
+    if (lastSession) {
+      console.log();
+      console.log(HEADER(`Resuming last session`));
+      console.log(DIM(`  ID: ${lastSession.id.slice(0, 8)}`));
+      console.log(DIM(`  Model: ${lastSession.model}`));
+      console.log(DIM(`  Started: ${new Date(lastSession.startTime).toLocaleString()}`));
+      console.log();
+
+      // Load history
+      const history = loadSessionHistory(lastSession.id);
+      if (history.length > 0) {
+        // Restore conversation history
+        ctx.store.setState({ conversationHistory: history });
+        console.log(SUCCESS(`✔ Restored ${history.length} messages from session`));
+      } else {
+        console.log(DIM('  No messages in session'));
+      }
+
+      console.log();
+      return { success: true };
+    } else {
+      console.log(ERROR('No previous session found for this project'));
+      console.log(DIM('Use /sessions to list all sessions'));
+      console.log();
+      return { success: false };
+    }
+  }
+
+  // Resume specific session
+  const session = loadSessionMeta(sessionId) || listSessions().find(s => s.id.startsWith(sessionId));
+
+  if (!session) {
+    console.log(ERROR(`Session not found: ${sessionId}`));
+    console.log(DIM('Use /sessions to list all sessions'));
+    console.log();
+    return { success: false };
+  }
+
+  console.log();
+  console.log(HEADER(`Resuming session ${session.id.slice(0, 8)}`));
+  console.log(DIM(`  Model: ${session.model}`));
+  console.log(DIM(`  Started: ${new Date(session.startTime).toLocaleString()}`));
+  console.log();
+
+  // Load history
+  const history = loadSessionHistory(session.id);
+  if (history.length > 0) {
+    ctx.store.setState({ conversationHistory: history });
+    console.log(SUCCESS(`✔ Restored ${history.length} messages`));
+  } else {
+    console.log(DIM('  No messages in session'));
+  }
+
+  console.log();
+  return { success: true };
+}
+
+// ============================================================================
 // 命令注册表
 // ============================================================================
 
@@ -762,6 +913,21 @@ const COMMANDS: SlashCommand[] = [
     params: [{ name: 'description', description: 'Task description', required: true }],
     type: 'builtin',
     execute: (ctx, args) => handleRun(ctx, args),
+  },
+
+  // Session 命令
+  {
+    name: 'sessions',
+    description: 'List recent sessions',
+    type: 'builtin',
+    execute: (ctx) => handleSessions(ctx),
+  },
+  {
+    name: 'resume',
+    description: 'Resume a previous session',
+    argumentHint: '[session-id]',
+    type: 'builtin',
+    execute: (ctx, args) => handleResume(ctx, args),
   },
 
   // Chat 命令
