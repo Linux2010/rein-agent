@@ -21,6 +21,8 @@ export interface CommandContext {
   store: Store;
   llm: LLMService | null;
   runtime: OpenHorseRuntime;
+  /** 当前会话 ID（用于记录消息） */
+  sessionId?: string;
 }
 
 /** 命令执行结果 */
