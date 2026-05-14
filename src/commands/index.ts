@@ -39,6 +39,28 @@ const SUCCESS = chalk.green;
 const HEADER = chalk.cyan.bold;
 
 // ============================================================================
+// 工具参数摘要
+// ============================================================================
+
+function compactToolArgs(args: Record<string, unknown>): string {
+  if (typeof args.path === 'string') {
+    return args.path.length > 48 ? args.path.slice(0, 45) + '...' : args.path;
+  }
+  if (typeof args.command === 'string') {
+    return args.command.length > 48 ? args.command.slice(0, 45) + '...' : args.command;
+  }
+  if (typeof args.pattern === 'string') {
+    return args.pattern.length > 48 ? args.pattern.slice(0, 45) + '...' : args.pattern;
+  }
+  for (const val of Object.values(args)) {
+    if (typeof val === 'string') {
+      return val.length > 48 ? val.slice(0, 45) + '...' : val;
+    }
+  }
+  return '';
+}
+
+// ============================================================================
 // 命令实现
 // ============================================================================
 
@@ -479,6 +501,8 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
       if (!responseStarted) {
         responseStarted = true;
         spinner.stop();
+        // 打印换行，让流式输出在新行开始
+        console.log();
       }
       process.stdout.write(chunk);
     },
@@ -504,6 +528,7 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           break;
 
         case 'tool_call':
+          // 只保存参数，不显示（等 tool_result 显示）
           lastToolCallId = event.callId;
           lastToolArgs = event.args;
           // Record tool call for session

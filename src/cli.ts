@@ -1,12 +1,13 @@
 /**
  * openhorse - 命令行交互入口
  *
- * 简化版 REPL，使用标准 readline。
+ * 简洁版 REPL，使用 readline 标准方式
  */
 
 import 'dotenv/config';
 import chalk from 'chalk';
 import figlet from 'figlet';
+import readline from 'readline';
 import { init, OpenHorseRuntime } from './init';
 import { LLMService } from './services/llm';
 import { TOOLS } from './tools';
@@ -20,7 +21,6 @@ import { parseInput, buildCommandSuggestions } from './commands/parser';
 import type { CommandContext } from './commands/types';
 import { getModeDisplayText } from './commands/types';
 import { renderHeaderBox } from './ui/box';
-import * as readline from 'readline';
 
 // ============================================================================
 // 颜色常量
@@ -40,12 +40,13 @@ const SUCCESS = chalk.green;
 let llm: LLMService | null = null;
 let store: Store;
 let currentSession: SessionMeta | null = null;
+let runtime: OpenHorseRuntime;
 
 // ============================================================================
-// 欢迎界面
+// Banner
 // ============================================================================
 
-function printBanner(): void {
+function showBanner() {
   const art = figlet.textSync('OPENHORSE', { font: 'standard' });
   console.log(BRAND(art));
   console.log();
@@ -61,22 +62,29 @@ function printBanner(): void {
     endpoint: baseUrl,
     status: llm ? 'ready' : 'loading',
     statusText: llm ? undefined : 'Set OPENHORSE_API_KEY in .env',
-    version: '0.1.0',
+    version: '0.1.1',
   });
   console.log(headerBox);
   console.log();
 }
 
 // ============================================================================
-// 交互模式（简化版）
+// 输入处理
 // ============================================================================
 
-async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: ACCENT('❯ ') + DIM(getModeIndicator()),
-  });
+function getPrompt(): string {
+  const mode = store.getSnapshot().permissionMode;
+  const modeText = getModeDisplayText(mode);
+  const modeIndicator = modeText ? `[${modeText}] ` : '';
+  return ACCENT('❯ ') + DIM(modeIndicator);
+}
+
+async function handleInput(input: string) {
+  const text = input.trim();
+  if (!text) return;
+
+  // 不在这里打印输入，readline 已经显示了
+  // 直接交给 executeChat 处理，它有自己的 spinner 和流式输出
 
   const ctx: CommandContext = {
     cwd: process.cwd(),
@@ -87,76 +95,38 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
     sessionId: currentSession?.id,
   };
 
-  console.log(SUCCESS('✔ System initialized successfully'));
-  console.log(DIM('  Type /help for available commands, /exit to quit'));
-  console.log(DIM('  Press shift+tab to cycle permission modes'));
-  if (!isConfigured(ctx.config)) {
-    console.log(WARN('  ⚠ LLM not configured — chat mode unavailable'));
-    console.log(DIM('  Set OPENHORSE_API_KEY in .env to enable chat'));
-  }
-  console.log();
+  try {
+    const parsed = parseInput(text);
 
-  rl.prompt();
-
-  rl.on('line', async (line: string) => {
-    const input = line.trim();
-    if (!input) {
-      rl.prompt();
-      return;
-    }
-
-    const parsed = parseInput(input);
-
-    try {
-      if (parsed.isCommand) {
-        const cmd = findCommand(parsed.name);
-        if (cmd) {
-          const result = await cmd.execute(ctx, parsed.args);
-          if (result.continueAsChat && result.chatInput) {
-            await executeChat(ctx, result.chatInput);
-          }
-        } else {
-          console.log(ERROR(`Unknown command: /${parsed.name}`));
-          const suggestions = buildCommandSuggestions(parsed.name);
-          if (suggestions.length > 0) {
-            console.log(DIM(`Did you mean: ${suggestions.map(s => `/${s}`).join(', ')}?`));
-          }
+    if (parsed.isCommand) {
+      const cmd = findCommand(parsed.name);
+      if (cmd) {
+        const result = await cmd.execute(ctx, parsed.args);
+        // executeChat 会被 cmd.execute 调用，如果需要
+        if (!result.continueAsChat) {
+          // 命令完成后的输出已经在 cmd.execute 中处理
         }
       } else {
-        // 直接 chat
-        await executeChat(ctx, parsed.args);
+        console.log(ERROR(`Unknown command: /${parsed.name}`));
+        const suggestions = buildCommandSuggestions(parsed.name);
+        if (suggestions.length > 0) {
+          console.log(DIM(`Did you mean: ${suggestions.map(s => `/${s}`).join(', ')}?`));
+        }
       }
-    } catch (err: any) {
-      console.log(ERROR(`Error: ${err.message || String(err)}`));
+    } else {
+      // 直接 chat - executeChat 有自己的 spinner 和流式输出
+      await executeChat(ctx, text);
     }
+  } catch (err: any) {
+    console.log(ERROR(`Error: ${err.message || String(err)}`));
+  }
 
-    // 更新 prompt 显示当前模式
-    rl.setPrompt(ACCENT('❯ ') + DIM(getModeIndicator()));
-    rl.prompt();
-  });
-
-  rl.on('close', async () => {
-    console.log();
-    console.log(DIM('Shutting down...'));
-    await runtime.shutdown();
-    console.log(SUCCESS('Goodbye! 🐴'));
-    process.exit(0);
-  });
-
-  rl.on('SIGINT', async () => {
-    console.log();
-    console.log(DIM('Shutting down...'));
-    await runtime.shutdown();
-    console.log(SUCCESS('Goodbye! 🐴'));
-    process.exit(0);
-  });
+  // 重新显示 prompt
+  rl.setPrompt(getPrompt());
+  rl.prompt();
 }
 
-function getModeIndicator(): string {
-  const mode = store.getSnapshot().permissionMode;
-  const modeText = getModeDisplayText(mode);
-  return modeText ? `[${modeText}] ` : '';
-}
+let rl: readline.Interface;
 
 // ============================================================================
 // 主入口
@@ -194,28 +164,49 @@ async function main(): Promise<void> {
     }
   }
 
-  printBanner();
-
   const config = store.getSnapshot().config;
-  const runtime = await init({
+  runtime = await init({
     name: config.name,
     mode: config.mode as any,
     logLevel: config.logLevel,
   });
 
-  process.on('SIGINT', async () => {
-    console.log(`\n${WARN('Received SIGINT')}`);
-    await runtime.shutdown();
-    process.exit(0);
+  await runtime.start();
+
+  // Banner
+  showBanner();
+
+  // 提示
+  console.log(SUCCESS('✔ System initialized'));
+  console.log(DIM('  Type /help for commands, /exit to quit'));
+  if (!isConfigured(cliConfig)) {
+    console.log(WARN('  ⚠ LLM not configured — set OPENHORSE_API_KEY'));
+  }
+  console.log();
+
+  // 创建 readline
+  rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: getPrompt(),
   });
-  process.on('SIGTERM', async () => {
-    console.log(`\n${WARN('Received SIGTERM')}`);
+
+  rl.on('line', handleInput);
+
+  rl.on('close', async () => {
+    console.log();
+    console.log(DIM('Shutting down...'));
     await runtime.shutdown();
+    console.log(SUCCESS('Goodbye! 🐴'));
     process.exit(0);
   });
 
-  await runtime.start();
-  await interactiveMode(runtime);
+  process.on('SIGINT', () => {
+    rl.close();
+  });
+
+  // 显示初始 prompt
+  rl.prompt();
 }
 
 main().catch(err => {
