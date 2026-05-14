@@ -482,6 +482,8 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
       if (!responseStarted) {
         responseStarted = true;
         spinner.stop();
+        // 打印换行，让流式输出在新行开始
+        process.stdout.write('\n');
       }
       process.stdout.write(chunk);
     },
