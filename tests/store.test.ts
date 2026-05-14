@@ -19,6 +19,8 @@ function makeConfig(overrides = {}) {
     name: 'test',
     mode: 'development' as const,
     logLevel: 'info' as const,
+    maxRetries: 3,
+    retryBaseDelay: 500,
     ...overrides,
   };
 }

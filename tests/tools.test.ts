@@ -23,8 +23,8 @@ function cleanupTestDir() {
 }
 
 describe('TOOLS array', () => {
-  test('contains 7 tools', () => {
-    expect(TOOLS).toHaveLength(7);
+  test('contains 11 tools', () => {
+    expect(TOOLS).toHaveLength(11);
   });
 
   test('includes expected tool names', () => {
@@ -36,6 +36,10 @@ describe('TOOLS array', () => {
     expect(names).toContain('edit_file');
     expect(names).toContain('glob');
     expect(names).toContain('grep');
+    expect(names).toContain('memory_save');
+    expect(names).toContain('memory_recall');
+    expect(names).toContain('memory_forget');
+    expect(names).toContain('history_search');
   });
 });
 
