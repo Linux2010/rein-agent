@@ -150,7 +150,18 @@ function is529Error(error: unknown): boolean {
 /** 从错误中提取 retry-after 时间 */
 function getRetryAfterMs(error: unknown): number | null {
   if (error instanceof OpenAI.APIError && error.headers) {
-    const retryAfter = error.headers.get('retry-after');
+    const headers = error.headers;
+    let retryAfter: string | null = null;
+
+    // headers may be Headers object or plain object
+    if (headers && typeof headers === 'object') {
+      if ('get' in headers && typeof headers.get === 'function') {
+        retryAfter = headers.get('retry-after');
+      } else if ('retry-after' in headers) {
+        retryAfter = (headers as Record<string, string>)['retry-after'];
+      }
+    }
+
     if (retryAfter) {
       const seconds = parseInt(retryAfter, 10);
       if (!isNaN(seconds)) return seconds * 1000;
