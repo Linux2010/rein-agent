@@ -22,10 +22,16 @@ export interface OpenHorseCLIConfig {
   apiBaseUrl?: string;
   /** 模型名称 */
   model: string;
+  /** 备用模型（主模型失败时切换） */
+  fallbackModel?: string;
   /** 最大输出 token */
   maxTokens: number;
   /** 温度 */
   temperature: number;
+  /** 最大重试次数 */
+  maxRetries: number;
+  /** 重试基础延迟 (ms) */
+  retryBaseDelay: number;
   /** 实例名称 */
   name: string;
   /** 运行模式 */
@@ -44,6 +50,8 @@ const DEFAULTS: Partial<OpenHorseCLIConfig> = {
   model: 'gpt-4o',
   maxTokens: 4096,
   temperature: 0.7,
+  maxRetries: 3,
+  retryBaseDelay: 500,
   name: 'openhorse',
   mode: 'development',
   logLevel: 'info',
@@ -67,10 +75,16 @@ export function loadConfig(overrides: Partial<OpenHorseCLIConfig> = {}): OpenHor
       overrides.apiBaseUrl ?? process.env.OPENHORSE_API_BASE_URL ?? process.env.OPENHORSE_BASE_URL ?? globalConfig.apiBaseUrl ?? undefined,
     model:
       overrides.model ?? process.env.OPENHORSE_MODEL ?? globalConfig.defaultModel ?? DEFAULTS.model!,
+    fallbackModel:
+      overrides.fallbackModel ?? process.env.OPENHORSE_FALLBACK_MODEL ?? undefined,
     maxTokens:
       overrides.maxTokens ?? parseNum(process.env.OPENHORSE_MAX_TOKENS) ?? globalConfig.maxTokens ?? DEFAULTS.maxTokens!,
     temperature:
       overrides.temperature ?? parseNum(process.env.OPENHORSE_TEMPERATURE) ?? globalConfig.temperature ?? DEFAULTS.temperature!,
+    maxRetries:
+      overrides.maxRetries ?? parseNum(process.env.OPENHORSE_MAX_RETRIES) ?? DEFAULTS.maxRetries!,
+    retryBaseDelay:
+      overrides.retryBaseDelay ?? parseNum(process.env.OPENHORSE_RETRY_BASE_DELAY) ?? DEFAULTS.retryBaseDelay!,
     name:
       overrides.name ?? process.env.OPENHORSE_NAME ?? DEFAULTS.name!,
     mode:
@@ -109,10 +123,13 @@ export function getConfigSummary(config: OpenHorseCLIConfig): Record<string, str
   return {
     name: config.name,
     model: config.model,
+    fallback: config.fallbackModel || '(none)',
     apiBaseUrl: config.apiBaseUrl || '(default OpenAI)',
     apiKey: config.apiKey ? `${config.apiKey.slice(0, 7)}***` : '(not set)',
     maxTokens: String(config.maxTokens),
     temperature: String(config.temperature),
+    maxRetries: String(config.maxRetries),
+    retryBaseDelay: String(config.retryBaseDelay) + 'ms',
     mode: config.mode,
     logLevel: config.logLevel,
     budgetLimit: config.budgetLimit ? `$${config.budgetLimit}` : '(no limit)',

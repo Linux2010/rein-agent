@@ -4,6 +4,7 @@
  * 封装 OpenAI 兼容 API，支持流式和非流式调用。
  * 兼容 OpenAI、Claude (via proxy)、本地 Ollama 等。
  * 支持工具调用（function calling）和 agentic 循环。
+ * 支持重试机制和 fallback model。
  */
 
 import OpenAI from 'openai';
@@ -21,12 +22,41 @@ export interface LLMConfig {
   baseUrl?: string;
   /** 模型名称 */
   model: string;
+  /** 备用模型（主模型失败时切换） */
+  fallbackModel?: string;
   /** 最大输出 token 数 */
   maxTokens?: number;
   /** 温度 */
   temperature?: number;
   /** 请求超时 (ms) */
   timeout?: number;
+  /** 最大重试次数 */
+  maxRetries?: number;
+  /** 重试基础延迟 (ms) */
+  retryBaseDelay?: number;
+}
+
+/** 重试配置 */
+export interface RetryConfig {
+  /** 最大重试次数 */
+  maxRetries: number;
+  /** 基础延迟 ms */
+  baseDelayMs: number;
+  /** 最大延迟 ms */
+  maxDelayMs?: number;
+  /** 重试回调 */
+  onRetry?: (attempt: number, error: Error, delayMs: number) => void;
+}
+
+/** Fallback 触发错误 */
+export class FallbackTriggeredError extends Error {
+  constructor(
+    public readonly originalModel: string,
+    public readonly fallbackModel: string,
+  ) {
+    super(`Fallback triggered: ${originalModel} -> ${fallbackModel}`);
+    this.name = 'FallbackTriggeredError';
+  }
 }
 
 /** 对话消息 */
@@ -82,6 +112,102 @@ export interface StreamCallbacks {
 }
 
 // ============================================================================
+// 重试机制
+// ============================================================================
+
+/** 默认重试配置 */
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  baseDelayMs: 500,
+  maxDelayMs: 10000,
+};
+
+/** 529 错误最大重试次数（触发 fallback） */
+const MAX_529_RETRIES = 3;
+
+/** 判断错误是否可重试 */
+function isRetryableError(error: unknown): boolean {
+  if (!error) return false;
+
+  if (error instanceof OpenAI.APIError) {
+    const status = error.status;
+    return status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 529;
+  }
+
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return msg.includes('timeout') || msg.includes('connection') || msg.includes('econnreset') || msg.includes('epipe');
+  }
+
+  return false;
+}
+
+/** 判断是否为 529 错误 */
+function is529Error(error: unknown): boolean {
+  return error instanceof OpenAI.APIError && error.status === 529;
+}
+
+/** 从错误中提取 retry-after 时间 */
+function getRetryAfterMs(error: unknown): number | null {
+  if (error instanceof OpenAI.APIError && error.headers) {
+    const retryAfter = error.headers.get('retry-after');
+    if (retryAfter) {
+      const seconds = parseInt(retryAfter, 10);
+      if (!isNaN(seconds)) return seconds * 1000;
+    }
+  }
+  return null;
+}
+
+/** 指数退避计算 */
+function exponentialBackoff(attempt: number, baseDelayMs: number, maxDelayMs?: number): number {
+  const delay = baseDelayMs * Math.pow(2, attempt - 1);
+  return maxDelayMs ? Math.min(delay, maxDelayMs) : delay;
+}
+
+/** Sleep 函数 */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** 带重试的操作 */
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  config: RetryConfig,
+): Promise<T> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= config.maxRetries + 1; attempt++) {
+    try {
+      return await operation();
+    } catch (error: unknown) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      if (!isRetryableError(error)) {
+        throw lastError;
+      }
+
+      if (attempt > config.maxRetries) {
+        throw lastError;
+      }
+
+      let delayMs = exponentialBackoff(attempt, config.baseDelayMs, config.maxDelayMs);
+
+      const retryAfter = getRetryAfterMs(error);
+      if (retryAfter !== null) {
+        delayMs = retryAfter;
+      }
+
+      config.onRetry?.(attempt, lastError, delayMs);
+
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError ?? new Error('Unknown error');
+}
+
+// ============================================================================
 // LLMService
 // ============================================================================
 
@@ -89,7 +215,9 @@ export class LLMService {
   private client: OpenAI;
   private config: Required<
     Pick<LLMConfig, 'model' | 'maxTokens' | 'temperature' | 'timeout'>
-  >;
+  > & { fallbackModel: string; maxRetries: number; retryBaseDelay: number };
+  private consecutive529Errors = 0;
+  private usingFallback = false;
 
   constructor(config: LLMConfig) {
     this.client = new OpenAI({
@@ -101,10 +229,33 @@ export class LLMService {
 
     this.config = {
       model: config.model,
+      fallbackModel: config.fallbackModel ?? '',
       maxTokens: config.maxTokens ?? 4096,
       temperature: config.temperature ?? 0.7,
       timeout: config.timeout ?? 60000,
+      maxRetries: config.maxRetries ?? DEFAULT_RETRY_CONFIG.maxRetries,
+      retryBaseDelay: config.retryBaseDelay ?? DEFAULT_RETRY_CONFIG.baseDelayMs,
     };
+  }
+
+  /** 是否正在使用 fallback model */
+  isUsingFallback(): boolean {
+    return this.usingFallback;
+  }
+
+  /** 触发 fallback */
+  triggerFallback(): void {
+    if (this.config.fallbackModel && !this.usingFallback) {
+      this.usingFallback = true;
+      this.config.model = this.config.fallbackModel;
+      this.consecutive529Errors = 0;
+    }
+  }
+
+  /** 重置为原始 model */
+  resetToPrimary(): void {
+    this.usingFallback = false;
+    this.consecutive529Errors = 0;
   }
 
   /**
@@ -151,7 +302,7 @@ export class LLMService {
   }
 
   /**
-   * 流式对话
+   * 流式对话（带重试）
    */
   async chatStream(
     messages: Message[],
@@ -161,107 +312,112 @@ export class LLMService {
     const onChunk = typeof callbacks === 'function' ? callbacks : callbacks?.onChunk;
     const onThinking = typeof callbacks === 'object' ? callbacks?.onThinking : undefined;
 
-    const params: Record<string, unknown> = {
-      model: this.config.model,
-      messages: this.toOpenAIMessages(messages),
-      max_tokens: this.config.maxTokens,
-      temperature: this.config.temperature,
-      stream: true,
-      // Request usage in stream response (OpenAI API requirement)
-      stream_options: { include_usage: true },
+    const retryConfig: RetryConfig = {
+      maxRetries: this.config.maxRetries,
+      baseDelayMs: this.config.retryBaseDelay,
+      maxDelayMs: 10000,
+      onRetry: (_attempt, error, _delayMs) => {
+        // 529 错误计数
+        if (is529Error(error)) {
+          this.consecutive529Errors++;
+          if (this.consecutive529Errors >= MAX_529_RETRIES && this.config.fallbackModel) {
+            this.triggerFallback();
+          }
+        }
+      },
     };
 
-    if (tools && tools.length > 0) {
-      params.tools = tools as ChatCompletionTool[];
-    }
-
-    onThinking?.();
-
-    const stream = await this.client.chat.completions.create(params as any) as unknown as AsyncIterable<any>;
-
-    let content = '';
-    let usedModel = this.config.model;
-    let usage: { promptTokens: number; completionTokens: number } | undefined;
-    const toolCallsMap = new Map<string, {
-      id: string;
-      type: 'function';
-      function: { name: string; arguments: string };
-    }>();
-
-    for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta;
-
-      // 文本内容
-      const text = delta?.content ?? '';
-      if (text) {
-        content += text;
-        onChunk?.(text);
-      }
-
-      // 工具调用片段
-      const tc = delta?.tool_calls?.[0];
-      if (tc?.id) {
-        toolCallsMap.set(tc.index ?? 0, {
-          id: tc.id,
-          type: 'function',
-          function: { name: tc.function?.name ?? '', arguments: '' },
-        });
-      } else if (tc?.function?.arguments) {
-        const entry = toolCallsMap.get(tc.index ?? 0);
-        if (entry) {
-          entry.function.arguments += tc.function.arguments;
-        }
-      }
-
-      // Extract usage from final chunk
-      if (chunk.usage) {
-        usage = {
-          promptTokens: chunk.usage.prompt_tokens ?? 0,
-          completionTokens: chunk.usage.completion_tokens ?? 0,
+    return withRetry(
+      async () => {
+        const params: Record<string, unknown> = {
+          model: this.config.model,
+          messages: this.toOpenAIMessages(messages),
+          max_tokens: this.config.maxTokens,
+          temperature: this.config.temperature,
+          stream: true,
+          stream_options: { include_usage: true },
         };
-      }
 
-      if (chunk.model) {
-        usedModel = chunk.model;
-      }
-    }
-
-    const toolCalls = Array.from(toolCallsMap.values());
-
-    // Ensure all tool_calls have valid JSON arguments (required by some APIs like DashScope)
-    for (const tc of toolCalls) {
-      if (!tc.function.arguments || tc.function.arguments.trim() === '') {
-        tc.function.arguments = '{}';
-      } else {
-        try {
-          // Validate and re-serialize to ensure valid JSON
-          const parsed = JSON.parse(tc.function.arguments);
-          tc.function.arguments = JSON.stringify(parsed);
-        } catch {
-          // If invalid JSON, use empty object
-          tc.function.arguments = '{}';
+        if (tools && tools.length > 0) {
+          params.tools = tools as ChatCompletionTool[];
         }
-      }
-    }
 
-    return {
-      content,
-      model: usedModel,
-      usage,
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-    };
+        onThinking?.();
+
+        const stream = await this.client.chat.completions.create(params as any) as unknown as AsyncIterable<any>;
+
+        let content = '';
+        let usedModel = this.config.model;
+        let usage: { promptTokens: number; completionTokens: number } | undefined;
+        const toolCallsMap = new Map<string, {
+          id: string;
+          type: 'function';
+          function: { name: string; arguments: string };
+        }>();
+
+        for await (const chunk of stream) {
+          const delta = chunk.choices?.[0]?.delta;
+
+          const text = delta?.content ?? '';
+          if (text) {
+            content += text;
+            onChunk?.(text);
+          }
+
+          const tc = delta?.tool_calls?.[0];
+          if (tc?.id) {
+            toolCallsMap.set(tc.index ?? 0, {
+              id: tc.id,
+              type: 'function',
+              function: { name: tc.function?.name ?? '', arguments: '' },
+            });
+          } else if (tc?.function?.arguments) {
+            const entry = toolCallsMap.get(tc.index ?? 0);
+            if (entry) {
+              entry.function.arguments += tc.function.arguments;
+            }
+          }
+
+          if (chunk.usage) {
+            usage = {
+              promptTokens: chunk.usage.prompt_tokens ?? 0,
+              completionTokens: chunk.usage.completion_tokens ?? 0,
+            };
+          }
+
+          if (chunk.model) {
+            usedModel = chunk.model;
+          }
+        }
+
+        const toolCalls = Array.from(toolCallsMap.values());
+
+        for (const tc of toolCalls) {
+          if (!tc.function.arguments || tc.function.arguments.trim() === '') {
+            tc.function.arguments = '{}';
+          } else {
+            try {
+              const parsed = JSON.parse(tc.function.arguments);
+              tc.function.arguments = JSON.stringify(parsed);
+            } catch {
+              tc.function.arguments = '{}';
+            }
+          }
+        }
+
+        return {
+          content,
+          model: usedModel,
+          usage,
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        };
+      },
+      retryConfig,
+    );
   }
 
   /**
    * 带工具调用的 agentic 循环
-   *
-   * 循环：LLM → tool_call → 执行工具 → 结果喂回 → LLM → ... → 最终文本
-   *
-   * @param messages 对话历史
-   * @param tools 工具定义
-   * @param toolExecutor 工具执行函数 (name, args) => result
-   * @param callbacks 流式回调
-   * @param maxIterations 最大循环次数
    */
   async chatWithTools(
     messages: Message[],
@@ -277,11 +433,9 @@ export class LLMService {
 
       const response = await this.chatStream(messages, {
         onChunk: callbacks?.onChunk,
-        // 只在第一轮显示 thinking（后续循环是工具调用，用户不需要看到 thinking）
         onThinking: iteration === 1 ? callbacks?.onThinking : undefined,
       }, tools);
 
-      // 保存助手回复到历史
       const assistantMsg: Message = {
         role: 'assistant',
         content: response.content,
@@ -291,7 +445,6 @@ export class LLMService {
       }
       messages.push(assistantMsg);
 
-      // 如果有工具调用，执行并继续
       if (response.toolCalls && response.toolCalls.length > 0) {
         for (const tc of response.toolCalls) {
           const result = await toolExecutor(tc.function.name, JSON.parse(tc.function.arguments));
@@ -304,11 +457,9 @@ export class LLMService {
         continue;
       }
 
-      // 无工具调用，循环结束
       return response;
     }
 
-    // 超过最大循环次数
     return {
       content: '达到了最大执行步数限制，未能完成。请简化任务。',
       model: this.config.model,
@@ -335,9 +486,11 @@ export class LLMService {
   getConfigSummary(): Record<string, string> {
     return {
       model: this.config.model,
+      fallback: this.config.fallbackModel || '(none)',
       maxTokens: String(this.config.maxTokens),
       temperature: String(this.config.temperature),
       timeout: String(this.config.timeout),
+      maxRetries: String(this.config.maxRetries),
     };
   }
 
