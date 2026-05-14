@@ -8,6 +8,8 @@ import 'dotenv/config';
 import chalk from 'chalk';
 import figlet from 'figlet';
 import readline from 'readline';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { init, OpenHorseRuntime } from './init';
 import { LLMService } from './services/llm';
 import { TOOLS } from './tools';
@@ -22,6 +24,17 @@ import { parseInput, buildCommandSuggestions } from './commands/parser';
 import type { CommandContext } from './commands/types';
 import { getModeDisplayText } from './commands/types';
 import { renderHeaderBox } from './ui/box';
+
+// Get version from package.json
+const VERSION = (() => {
+  try {
+    const pkgPath = join(__dirname, '..', 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    return pkg.version || '0.1.3';
+  } catch {
+    return '0.1.3';
+  }
+})();
 
 // ============================================================================
 // 颜色常量
@@ -63,7 +76,7 @@ function showBanner() {
     endpoint: baseUrl,
     status: llm ? 'ready' : 'loading',
     statusText: llm ? undefined : 'Set OPENHORSE_API_KEY in .env',
-    version: '0.1.1',
+    version: VERSION,
   });
   console.log(headerBox);
   console.log();
