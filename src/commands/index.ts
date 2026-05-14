@@ -466,14 +466,11 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
   let responseStarted = false;
   const sessionMessagesToRecord: SessionMessage[] = [];
   let lastToolCallId = '';
+  let lastToolArgs: Record<string, unknown> = {};
 
   const toolExecutor = async (name: string, args: Record<string, unknown>) => {
-    const start = Date.now();
     const result = await executeTool(name, args);
-    const duration = Date.now() - start;
-    const parsed = JSON.parse(result);
-    spinner.stop();
-    console.log(toolLine(name, args, parsed.success !== false, duration));
+    // 不在这里打印，让 tool_result 事件处理
     return result;
   };
 
@@ -508,6 +505,7 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
 
         case 'tool_call':
           lastToolCallId = event.callId;
+          lastToolArgs = event.args;
           // Record tool call for session
           sessionMessagesToRecord.push({
             role: 'assistant',
@@ -520,7 +518,7 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
         case 'tool_result':
           // 显示工具结果后，准备下一轮（不启动 spinner）
           const parsedResult = JSON.parse(event.result);
-          console.log(toolLine(event.name, {}, parsedResult.success !== false, event.duration));
+          console.log(toolLine(event.name, lastToolArgs, parsedResult.success !== false, event.duration));
           // Record tool result for session
           sessionMessagesToRecord.push({
             role: 'tool',
