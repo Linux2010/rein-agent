@@ -39,7 +39,12 @@ export const TOOLS: OpenHorseTool[] = [
       required: ['path'],
     },
     execute: async (args) => {
-      return readFileSync_(args.path as string, args.maxLines as number | undefined);
+      // Ensure path is a valid string
+      const path = args.path;
+      if (!path || typeof path !== 'string') {
+        return { success: false, output: '', error: 'read_file requires a path parameter' };
+      }
+      return readFileSync_(path, args.maxLines as number | undefined);
     },
     isReadOnly: () => true,
     userFacingName: (args) => `Read ${args.path as string}`,
@@ -63,7 +68,16 @@ export const TOOLS: OpenHorseTool[] = [
       required: ['path', 'content'],
     },
     execute: async (args) => {
-      return writeFileSync_(args.path as string, args.content as string);
+      // Ensure path and content are valid strings
+      const path = args.path;
+      const content = args.content;
+      if (!path || typeof path !== 'string') {
+        return { success: false, output: '', error: 'write_file requires a path parameter' };
+      }
+      if (!content || typeof content !== 'string') {
+        return { success: false, output: '', error: 'write_file requires a content parameter' };
+      }
+      return writeFileSync_(path, content);
     },
     isDestructive: () => true,
     checkPermissions: (args, context) => {
@@ -91,7 +105,12 @@ export const TOOLS: OpenHorseTool[] = [
       required: ['path'],
     },
     execute: async (args) => {
-      return listFiles_(args.path as string, args.maxDepth as number | undefined);
+      // Ensure path is a valid string
+      const path = args.path;
+      if (!path || typeof path !== 'string') {
+        return { success: false, output: '', error: 'list_files requires a path parameter' };
+      }
+      return listFiles_(path, args.maxDepth as number | undefined);
     },
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
@@ -120,7 +139,12 @@ export const TOOLS: OpenHorseTool[] = [
       required: ['command'],
     },
     execute: async (args) => {
-      return execCommand_(args.command as string, args.cwd as string | undefined, args.timeout as number | undefined);
+      // Ensure command is a valid string
+      const command = args.command;
+      if (!command || typeof command !== 'string') {
+        return { success: false, output: '', error: 'exec_command requires a command parameter' };
+      }
+      return execCommand_(command, args.cwd as string | undefined, args.timeout as number | undefined);
     },
     isDestructive: (args) => {
       const cmd = (args.command as string) || '';
@@ -176,7 +200,20 @@ export const TOOLS: OpenHorseTool[] = [
       required: ['path', 'old_string', 'new_string'],
     },
     execute: async (args) => {
-      return editFile_(args.path as string, args.old_string as string, args.new_string as string, args.replace_all as boolean | undefined);
+      // Ensure required parameters are valid strings
+      const path = args.path;
+      const old_string = args.old_string;
+      const new_string = args.new_string;
+      if (!path || typeof path !== 'string') {
+        return { success: false, output: '', error: 'edit_file requires a path parameter' };
+      }
+      if (!old_string || typeof old_string !== 'string') {
+        return { success: false, output: '', error: 'edit_file requires an old_string parameter' };
+      }
+      if (!new_string || typeof new_string !== 'string') {
+        return { success: false, output: '', error: 'edit_file requires a new_string parameter' };
+      }
+      return editFile_(path, old_string, new_string, args.replace_all as boolean | undefined);
     },
     isDestructive: () => true,
     checkPermissions: (args, context) => {
@@ -203,7 +240,12 @@ export const TOOLS: OpenHorseTool[] = [
       required: ['pattern'],
     },
     execute: async (args) => {
-      return glob_(args.pattern as string, args.path as string | undefined);
+      // Ensure pattern is a valid string
+      const pattern = args.pattern;
+      if (!pattern || typeof pattern !== 'string') {
+        return { success: false, output: '', error: 'glob requires a pattern parameter' };
+      }
+      return glob_(pattern, args.path as string | undefined);
     },
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
@@ -236,7 +278,12 @@ export const TOOLS: OpenHorseTool[] = [
       required: ['pattern'],
     },
     execute: async (args) => {
-      return grep_(args.pattern as string, args.path as string | undefined, args.glob as string | undefined, args.context as number | undefined);
+      // Ensure pattern is a valid string
+      const pattern = args.pattern;
+      if (!pattern || typeof pattern !== 'string') {
+        return { success: false, output: '', error: 'grep requires a pattern parameter' };
+      }
+      return grep_(pattern, args.path as string | undefined, args.glob as string | undefined, args.context as number | undefined);
     },
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
