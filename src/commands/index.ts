@@ -10,7 +10,7 @@ import type { Task } from '../core/agent';
 import { TaskManager, CreateTaskOptions } from '../services/task-manager';
 import { AgentRunner } from '../services/agent-runner';
 import { isConfigured } from '../services/config';
-import { createSpinner } from '../ui/box';
+import { createSpinner, toolLine } from '../ui/box';
 import { query, getSystemPrompt, type QueryEvent, type PromptContext } from '../framework';
 import { TOOLS, executeTool, getToolNames } from '../tools';
 import type { Message, StreamCallbacks } from '../services/llm';
@@ -491,10 +491,7 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
   let lastToolArgs: Record<string, unknown> = {};
 
   const toolExecutor = async (name: string, args: Record<string, unknown>) => {
-    const start = Date.now();
     const result = await executeTool(name, args);
-    const duration = Date.now() - start;
-    const parsed = JSON.parse(result);
     // 不在这里打印，让 tool_result 事件处理
     return result;
   };
@@ -524,9 +521,10 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
     })) {
       switch (event.type) {
         case 'request_start':
+          // 停止 spinner，等待 LLM 响应
           spinner.stop();
           console.log();
-          spinner.start(`Turn ${event.turn}`);
+          console.log(DIM(`Turn ${event.turn}...`));
           break;
 
         case 'tool_call':
@@ -543,16 +541,9 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           break;
 
         case 'tool_result':
-          // 显示工具执行结果（唯一一次）
-          spinner.stop();
-          console.log();
+          // 显示工具结果后，准备下一轮（不启动 spinner）
           const parsedResult = JSON.parse(event.result);
-          const status = parsedResult.success !== false
-            ? SUCCESS('✓') + (event.duration ? ` ${event.duration}ms` : '')
-            : ERROR('✗') + (event.duration ? ` ${event.duration}ms` : '');
-          const resultArgSummary = compactToolArgs(lastToolArgs);
-          console.log(`  ${ACCENT('▸')} ${ACCENT(event.name)} ${DIM(resultArgSummary)} ${status}`);
-          // 不启动 spinner，等下一个 request_start 或 complete
+          console.log(toolLine(event.name, lastToolArgs, parsedResult.success !== false, event.duration));
           // Record tool result for session
           sessionMessagesToRecord.push({
             role: 'tool',
@@ -562,8 +553,11 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           });
           break;
 
+        case 'strategy_exhausted':
+          console.log(WARN(`⚠ ${event.suggestion}`));
+          break;
+
         case 'complete':
-          spinner.stop();
           finalContent = event.content;
           finalModel = event.model;
           finalUsage = event.usage;

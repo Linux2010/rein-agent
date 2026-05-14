@@ -14,6 +14,7 @@ import type { OpenHorseTool, ToolContext, PermissionResult } from './tool';
 import type { PermissionMode } from '../commands/types';
 import type { CostTracker } from '../core/cost-tracker';
 import { toOpenAITools } from './tool';
+import { createStrategyTracker, type StrategyTracker, type StrategyResult } from '../core/strategy-tracker';
 
 // ============================================================================
 // 事件类型
@@ -23,6 +24,7 @@ export type QueryEvent =
   | { type: 'request_start'; model: string; turn: number }
   | { type: 'tool_call'; name: string; args: Record<string, unknown>; callId: string }
   | { type: 'tool_result'; name: string; result: string; duration: number }
+  | { type: 'strategy_exhausted'; suggestion: string }
   | { type: 'message'; role: 'assistant'; content: string }
   | { type: 'complete'; content: string; usage?: { promptTokens: number; completionTokens: number }; model: string };
 
@@ -51,6 +53,8 @@ export interface QueryParams {
   toolContext?: ToolContext;
   /** Cost tracker for recording usage */
   costTracker?: CostTracker;
+  /** Strategy tracker for alternative approaches */
+  strategyTracker?: StrategyTracker;
 }
 
 // ============================================================================
@@ -82,6 +86,7 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
     abortSignal,
     streamCallbacks,
     costTracker,
+    strategyTracker = createStrategyTracker({ maxAttempts: 3 }),
   } = params;
 
   const openaiTools = toOpenAITools(tools) as unknown as Tool[];
@@ -126,13 +131,16 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
           try {
             args = JSON.parse(rawArgs);
           } catch {
-            // If parse fails, use empty object
             args = {};
           }
         }
 
         // Re-serialize arguments to ensure valid JSON for next API call
         tc.function.arguments = JSON.stringify(args);
+
+        // Start tracking this approach
+        const attemptId = strategyTracker.startApproach(tc.function.name);
+        strategyTracker.addTool(attemptId, tc.function.name);
 
         yield {
           type: 'tool_call',
@@ -156,22 +164,33 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
               error: perm.reason || 'Permission denied',
             });
           } else if (perm.behavior === 'ask' && params.permissionMode === 'default') {
-            // In default mode, ask user for destructive operations
-            // For now, deny with message (future: interactive prompt)
             result = JSON.stringify({
               success: false,
-              error: `Tool ${tc.function.name} requires user confirmation. Use 'acceptEdits' or 'auto' mode to allow.`,
+              error: `Tool ${tc.function.name} requires user confirmation.`,
             });
           } else {
-            // Allow: either permission is 'allow' or mode is 'acceptEdits'/'auto'
             result = await toolExecutor(tc.function.name, args);
           }
         } else {
-          // No permission check defined, execute directly
           result = await toolExecutor(tc.function.name, args);
         }
 
         const duration = Date.now() - start;
+
+        // Parse result and record to strategy tracker
+        let strategyResult: StrategyResult = 'success';
+        let errorMsg: string | undefined;
+        try {
+          const parsed = JSON.parse(result);
+          if (parsed.success === false) {
+            strategyResult = 'failed';
+            errorMsg = parsed.error || 'Unknown error';
+          }
+        } catch {
+          strategyResult = 'failed';
+          errorMsg = 'Invalid result';
+        }
+        strategyTracker.recordResult(attemptId, strategyResult, errorMsg, duration);
 
         yield {
           type: 'tool_result',
@@ -185,6 +204,20 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
           content: result,
           tool_call_id: tc.id,
         });
+
+        // Check if strategy exhausted - suggest alternatives
+        if (strategyTracker.isExhausted()) {
+          const suggestion = strategyTracker.suggestAlternative();
+          if (suggestion) {
+            yield { type: 'strategy_exhausted', suggestion };
+            // Add suggestion to messages for LLM to consider
+            messages.push({
+              role: 'user',
+              content: suggestion,
+            });
+            strategyTracker.reset();
+          }
+        }
       }
 
       // Continue to next turn
