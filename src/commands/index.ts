@@ -472,8 +472,7 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
     const result = await executeTool(name, args);
     const duration = Date.now() - start;
     const parsed = JSON.parse(result);
-    spinner.stop();
-    console.log(toolLine(name, args, parsed.success !== false, duration));
+    // 不在这里打印，让 tool_result 事件处理
     return result;
   };
 
@@ -483,7 +482,7 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
         responseStarted = true;
         spinner.stop();
         // 打印换行，让流式输出在新行开始
-        process.stdout.write('\n');
+        console.log();
       }
       process.stdout.write(chunk);
     },
@@ -502,10 +501,15 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
     })) {
       switch (event.type) {
         case 'request_start':
-          spinner.update(`Turn ${event.turn}...`);
+          spinner.stop();
+          console.log();
+          spinner.start(`Turn ${event.turn}`);
           break;
 
         case 'tool_call':
+          // 停止 spinner，显示工具开始执行
+          spinner.stop();
+          console.log();
           lastToolCallId = event.callId;
           // Record tool call for session
           sessionMessagesToRecord.push({
@@ -517,6 +521,10 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           break;
 
         case 'tool_result':
+          // 显示工具执行结果
+          const parsedResult = JSON.parse(event.result);
+          console.log(toolLine(event.name, {}, parsedResult.success !== false, event.duration));
+          // 重新启动 spinner
           spinner.start('Thinking');
           // Record tool result for session
           sessionMessagesToRecord.push({

@@ -223,7 +223,8 @@ export function createSpinner(): Spinner {
     if (!isRunning || shouldStop) return;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
-    process.stdout.write(`${CLEAR_LINE}${spinner} ${currentText} (${elapsed}s)`);
+    // 确保清除整行并重新定位
+    process.stdout.write(`\r\x1b[2K${spinner} ${currentText} (${elapsed}s)`);
     frame++;
   }
 
@@ -248,7 +249,8 @@ export function createSpinner(): Spinner {
         clearInterval(interval);
         interval = null;
       }
-      process.stdout.write(CLEAR_LINE);
+      // 清除整行并定位到行首
+      process.stdout.write('\r\x1b[2K');
     },
 
     update(text) {
