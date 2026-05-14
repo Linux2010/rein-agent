@@ -1,46 +1,78 @@
 /**
  * openhorse - Memory Storage
  *
- * File-based memory system stored in ~/.openhorse/memory/
+ * File-based memory system stored in ~/.openhorse/projects/<hash>/memory/
  * - MEMORY.md: Index file (one-line hooks)
  * - *.md: Individual memory entries with frontmatter
+ *
+ * Memory is project-scoped: each project has its own memory directory.
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'fs';
 import { join, basename } from 'path';
-import { homedir } from 'os';
+import { createHash } from 'crypto';
 import type { MemoryEntry, MemoryType } from './types';
+import { getConfigHome } from '../services/config-dir';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-export const MEMORY_DIR_NAME = '.openhorse';
+export const PROJECTS_SUBDIR = 'projects';
 export const MEMORY_SUBDIR = 'memory';
 export const ENTRYPOINT_NAME = 'MEMORY.md';
 export const MAX_ENTRYPOINT_LINES = 200;
 export const MAX_ENTRYPOINT_BYTES = 25000;
 
 // ============================================================================
+// Project Path Hash
+// ============================================================================
+
+/**
+ * Convert project path to a hash for directory naming.
+ * Uses SHA256 truncated to 16 characters for shorter paths.
+ */
+export function getProjectHash(projectPath: string): string {
+  return createHash('sha256').update(projectPath).digest('hex').slice(0, 16);
+}
+
+// ============================================================================
 // Paths
 // ============================================================================
 
-/** Get memory directory path */
-export function getMemoryDir(): string {
-  return join(homedir(), MEMORY_DIR_NAME, MEMORY_SUBDIR);
+/**
+ * Get memory directory path for a specific project.
+ * @param projectPath - Project path (defaults to current working directory)
+ */
+export function getMemoryDir(projectPath?: string): string {
+  const configHome = getConfigHome();
+
+  if (projectPath) {
+    const hash = getProjectHash(projectPath);
+    return join(configHome, PROJECTS_SUBDIR, hash, MEMORY_SUBDIR);
+  }
+
+  // Legacy: use global memory directory (v0.1.2 style)
+  // This is kept for backwards compatibility but not recommended
+  return join(configHome, MEMORY_SUBDIR);
 }
 
-/** Get MEMORY.md path */
-export function getEntrypointPath(): string {
-  return join(getMemoryDir(), ENTRYPOINT_NAME);
+/**
+ * Get MEMORY.md path for a project.
+ */
+export function getEntrypointPath(projectPath?: string): string {
+  return join(getMemoryDir(projectPath), ENTRYPOINT_NAME);
 }
 
-/** Ensure memory directory exists */
-export function ensureMemoryDir(): void {
-  const dir = getMemoryDir();
+/**
+ * Ensure memory directory exists for a project.
+ */
+export function ensureMemoryDir(projectPath?: string): string {
+  const dir = getMemoryDir(projectPath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
+  return dir;
 }
 
 // ============================================================================
@@ -93,10 +125,12 @@ ${entry.content}`;
 // Loading
 // ============================================================================
 
-/** Load all memory entries from directory */
-export function loadAllMemories(): MemoryEntry[] {
-  ensureMemoryDir();
-  const dir = getMemoryDir();
+/**
+ * Load all memory entries from a project's memory directory.
+ * @param projectPath - Project path (defaults to cwd)
+ */
+export function loadAllMemories(projectPath?: string): MemoryEntry[] {
+  const dir = ensureMemoryDir(projectPath);
   const memories: MemoryEntry[] = [];
 
   try {
@@ -123,16 +157,20 @@ export function loadAllMemories(): MemoryEntry[] {
   return memories;
 }
 
-/** Load MEMORY.md index */
-export function loadMemoryIndex(): string {
-  const path = getEntrypointPath();
+/**
+ * Load MEMORY.md index for a project.
+ */
+export function loadMemoryIndex(projectPath?: string): string {
+  const path = getEntrypointPath(projectPath);
   if (!existsSync(path)) return '';
   return readFileSync(path, 'utf-8');
 }
 
-/** Load specific memory by name */
-export function loadMemory(name: string): MemoryEntry | null {
-  const dir = getMemoryDir();
+/**
+ * Load specific memory by name from a project.
+ */
+export function loadMemory(name: string, projectPath?: string): MemoryEntry | null {
+  const dir = getMemoryDir(projectPath);
   const filePath = join(dir, `${name}.md`);
 
   if (!existsSync(filePath)) return null;
@@ -155,10 +193,12 @@ export function loadMemory(name: string): MemoryEntry | null {
 // Saving
 // ============================================================================
 
-/** Save memory entry to file */
-export function saveMemory(entry: MemoryEntry): void {
-  ensureMemoryDir();
-  const dir = getMemoryDir();
+/**
+ * Save memory entry to a project's memory directory.
+ */
+export function saveMemory(entry: MemoryEntry, projectPath?: string): void {
+  ensureMemoryDir(projectPath);
+  const dir = getMemoryDir(projectPath);
   const filePath = join(dir, `${entry.name}.md`);
 
   const now = Date.now();
@@ -169,12 +209,14 @@ export function saveMemory(entry: MemoryEntry): void {
   writeFileSync(filePath, content, 'utf-8');
 
   // Update MEMORY.md index
-  updateMemoryIndex();
+  updateMemoryIndex(projectPath);
 }
 
-/** Delete memory entry */
-export function deleteMemory(name: string): void {
-  const dir = getMemoryDir();
+/**
+ * Delete memory entry from a project.
+ */
+export function deleteMemory(name: string, projectPath?: string): void {
+  const dir = getMemoryDir(projectPath);
   const filePath = join(dir, `${name}.md`);
 
   if (existsSync(filePath)) {
@@ -183,12 +225,14 @@ export function deleteMemory(name: string): void {
     writeFileSync(filePath, `---\nname: ${name}\nstatus: deleted\n---\n`, 'utf-8');
   }
 
-  updateMemoryIndex();
+  updateMemoryIndex(projectPath);
 }
 
-/** Update MEMORY.md index */
-export function updateMemoryIndex(): void {
-  const memories = loadAllMemories();
+/**
+ * Update MEMORY.md index for a project.
+ */
+export function updateMemoryIndex(projectPath?: string): void {
+  const memories = loadAllMemories(projectPath);
   const lines: string[] = [
     '# Memory Index',
     '',
@@ -220,16 +264,18 @@ export function updateMemoryIndex(): void {
     }
   }
 
-  writeFileSync(getEntrypointPath(), lines.join('\n'), 'utf-8');
+  writeFileSync(getEntrypointPath(projectPath), lines.join('\n'), 'utf-8');
 }
 
 // ============================================================================
 // Search
 // ============================================================================
 
-/** Search memories by query */
-export function searchMemories(query: string): MemoryEntry[] {
-  const memories = loadAllMemories();
+/**
+ * Search memories by query in a project.
+ */
+export function searchMemories(query: string, projectPath?: string): MemoryEntry[] {
+  const memories = loadAllMemories(projectPath);
   const lowerQuery = query.toLowerCase();
 
   return memories.filter(mem => {
@@ -242,8 +288,10 @@ export function searchMemories(query: string): MemoryEntry[] {
   });
 }
 
-/** Get memories by type */
-export function getMemoriesByType(type: MemoryType): MemoryEntry[] {
-  const memories = loadAllMemories();
+/**
+ * Get memories by type from a project.
+ */
+export function getMemoriesByType(type: MemoryType, projectPath?: string): MemoryEntry[] {
+  const memories = loadAllMemories(projectPath);
   return memories.filter(mem => mem.type === type);
 }

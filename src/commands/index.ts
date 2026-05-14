@@ -24,6 +24,7 @@ import {
   endSession,
   type SessionMeta,
   type SessionMessage,
+  type ToolCallRecord,
 } from '../services/session-storage';
 
 // ============================================================================
@@ -476,6 +477,7 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
     platform: process.platform,
     nodeVersion: process.version,
     tools: TOOLS,
+    memoryContent: snapshot.memoryContent,
   };
   const systemPrompt = getSystemPrompt(promptCtx);
 
@@ -489,6 +491,9 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
   const sessionMessagesToRecord: SessionMessage[] = [];
   let lastToolCallId = '';
   let lastToolArgs: Record<string, unknown> = {};
+  // 收集当前 turn 的所有 tool_calls，用于构建完整的 assistant 消息
+  let pendingToolCalls: ToolCallRecord[] = [];
+  let currentAssistantContent = '';
 
   const toolExecutor = async (name: string, args: Record<string, unknown>) => {
     const result = await executeTool(name, args);
@@ -504,6 +509,7 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
         // 打印换行，让流式输出在新行开始
         console.log();
       }
+      currentAssistantContent += chunk;
       process.stdout.write(chunk);
     },
   };
@@ -525,18 +531,22 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           spinner.stop();
           console.log();
           console.log(DIM(`Turn ${event.turn}...`));
+          // 重置当前 turn 的状态
+          pendingToolCalls = [];
+          currentAssistantContent = '';
           break;
 
         case 'tool_call':
-          // 只保存参数，不显示（等 tool_result 显示）
+          // 收集完整的 tool_call 信息
           lastToolCallId = event.callId;
           lastToolArgs = event.args;
-          // Record tool call for session
-          sessionMessagesToRecord.push({
-            role: 'assistant',
-            content: '',
-            timestamp: Date.now(),
-            toolCallId: event.callId,
+          pendingToolCalls.push({
+            id: event.callId,
+            type: 'function',
+            function: {
+              name: event.name,
+              arguments: JSON.stringify(event.args),
+            },
           });
           break;
 
@@ -553,6 +563,25 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           });
           break;
 
+        case 'message':
+          // 收到 assistant 文本消息，如果有 pending tool_calls，先记录带 tool_calls 的消息
+          if (pendingToolCalls.length > 0) {
+            sessionMessagesToRecord.push({
+              role: 'assistant',
+              content: event.content || '',
+              timestamp: Date.now(),
+              tool_calls: pendingToolCalls,
+            });
+            pendingToolCalls = [];
+          } else if (event.content) {
+            sessionMessagesToRecord.push({
+              role: 'assistant',
+              content: event.content,
+              timestamp: Date.now(),
+            });
+          }
+          break;
+
         case 'strategy_exhausted':
           console.log(WARN(`⚠ ${event.suggestion}`));
           break;
@@ -561,6 +590,16 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           finalContent = event.content;
           finalModel = event.model;
           finalUsage = event.usage;
+          // 如果 complete 时还有 pending tool_calls（没有 message 事件），记录它们
+          if (pendingToolCalls.length > 0) {
+            sessionMessagesToRecord.push({
+              role: 'assistant',
+              content: finalContent || '',
+              timestamp: Date.now(),
+              tool_calls: pendingToolCalls,
+            });
+            pendingToolCalls = [];
+          }
           break;
       }
     }

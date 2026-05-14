@@ -9,10 +9,24 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, readdirSync, u
 import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { ensureConfigDir, getHistoryPath, getSessionMetaPath, getSessionMessagesPath, getSessionsDir } from './config-dir';
+import type { Message } from './llm';
 
 // ============================================================================
 // 类型定义
 // ============================================================================
+
+/** 工具调用记录（用于 assistant 消息） */
+export interface ToolCallRecord {
+  /** 调用 ID */
+  id: string;
+  /** 类型 */
+  type: 'function';
+  /** 函数信息 */
+  function: {
+    name: string;
+    arguments: string;  // JSON string
+  };
+}
 
 /** 会话元数据 */
 export interface SessionMeta {
@@ -56,6 +70,8 @@ export interface SessionMessage {
   timestamp: number;
   /** 工具调用 ID (tool role) */
   toolCallId?: string;
+  /** 工具调用列表 (assistant role) */
+  tool_calls?: ToolCallRecord[];
 }
 
 // ============================================================================
@@ -255,14 +271,28 @@ export function readSessionMessages(sessionId: string): SessionMessage[] {
 
 /**
  * 读取会话消息并转换为 Message 格式（用于恢复对话历史）
+ * 包含完整的 tool_calls 信息，确保 LLM 能理解之前的工具调用
  */
-export function loadSessionHistory(sessionId: string): Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string; tool_call_id?: string }> {
+export function loadSessionHistory(sessionId: string): Message[] {
   const messages = readSessionMessages(sessionId);
-  return messages.map(m => ({
-    role: m.role,
-    content: m.content,
-    ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
-  }));
+  return messages.map(m => {
+    const result: Message = {
+      role: m.role,
+      content: m.content,
+    };
+
+    // tool role: 添加 tool_call_id
+    if (m.role === 'tool' && m.toolCallId) {
+      result.tool_call_id = m.toolCallId;
+    }
+
+    // assistant role: 添加 tool_calls
+    if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) {
+      result.tool_calls = m.tool_calls;
+    }
+
+    return result;
+  });
 }
 
 /**

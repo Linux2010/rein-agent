@@ -15,6 +15,7 @@ import { loadConfig, isConfigured } from './services/config';
 import { ensureConfigDir } from './services/config-dir';
 import { recordFirstStartTime, incrementSessionCount } from './services/global-config';
 import { createSession, type SessionMeta } from './services/session-storage';
+import { loadAllMemories } from './memory/storage';
 import { Store } from './framework';
 import { findCommand, executeChat, getCommandNames } from './commands';
 import { parseInput, buildCommandSuggestions } from './commands/parser';
@@ -136,15 +137,23 @@ async function main(): Promise<void> {
   ensureConfigDir();
   recordFirstStartTime();
 
+  const projectPath = process.cwd();
   const cliConfig = loadConfig();
+
+  // Load project memory
+  const memories = loadAllMemories(projectPath);
+  const memoryContent = memories.length > 0
+    ? memories.map(m => `## ${m.name} (${m.type})\n${m.content}`).join('\n\n')
+    : '';
 
   store = new Store({
     config: cliConfig,
     tools: TOOLS,
     currentModel: cliConfig.model,
+    memoryContent,
   });
 
-  currentSession = createSession(process.cwd(), cliConfig.model);
+  currentSession = createSession(projectPath, cliConfig.model);
   incrementSessionCount();
 
   if (isConfigured(cliConfig)) {
