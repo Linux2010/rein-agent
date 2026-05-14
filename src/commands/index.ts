@@ -10,7 +10,7 @@ import type { Task } from '../core/agent';
 import { TaskManager, CreateTaskOptions } from '../services/task-manager';
 import { AgentRunner } from '../services/agent-runner';
 import { isConfigured } from '../services/config';
-import { createSpinner, toolLine } from '../ui/box';
+import { createSpinner } from '../ui/box';
 import { query, getSystemPrompt, type QueryEvent, type PromptContext } from '../framework';
 import { TOOLS, executeTool, getToolNames } from '../tools';
 import type { Message, StreamCallbacks } from '../services/llm';
@@ -37,6 +37,28 @@ const ERROR = chalk.red;
 const WARN = chalk.yellow;
 const SUCCESS = chalk.green;
 const HEADER = chalk.cyan.bold;
+
+// ============================================================================
+// 工具参数摘要
+// ============================================================================
+
+function compactToolArgs(args: Record<string, unknown>): string {
+  if (typeof args.path === 'string') {
+    return args.path.length > 48 ? args.path.slice(0, 45) + '...' : args.path;
+  }
+  if (typeof args.command === 'string') {
+    return args.command.length > 48 ? args.command.slice(0, 45) + '...' : args.command;
+  }
+  if (typeof args.pattern === 'string') {
+    return args.pattern.length > 48 ? args.pattern.slice(0, 45) + '...' : args.pattern;
+  }
+  for (const val of Object.values(args)) {
+    if (typeof val === 'string') {
+      return val.length > 48 ? val.slice(0, 45) + '...' : val;
+    }
+  }
+  return '';
+}
 
 // ============================================================================
 // 命令实现
@@ -466,14 +488,14 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
   let responseStarted = false;
   const sessionMessagesToRecord: SessionMessage[] = [];
   let lastToolCallId = '';
+  let lastToolArgs: Record<string, unknown> = {};
 
   const toolExecutor = async (name: string, args: Record<string, unknown>) => {
     const start = Date.now();
     const result = await executeTool(name, args);
     const duration = Date.now() - start;
     const parsed = JSON.parse(result);
-    spinner.stop();
-    console.log(toolLine(name, args, parsed.success !== false, duration));
+    // 不在这里打印，让 tool_result 事件处理
     return result;
   };
 
@@ -482,6 +504,8 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
       if (!responseStarted) {
         responseStarted = true;
         spinner.stop();
+        // 打印换行，让流式输出在新行开始
+        console.log();
       }
       process.stdout.write(chunk);
     },
@@ -500,11 +524,15 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
     })) {
       switch (event.type) {
         case 'request_start':
-          spinner.update(`Turn ${event.turn}...`);
+          spinner.stop();
+          console.log();
+          spinner.start(`Turn ${event.turn}`);
           break;
 
         case 'tool_call':
+          // 只保存参数，不显示（等 tool_result 显示）
           lastToolCallId = event.callId;
+          lastToolArgs = event.args;
           // Record tool call for session
           sessionMessagesToRecord.push({
             role: 'assistant',
@@ -515,7 +543,16 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           break;
 
         case 'tool_result':
-          spinner.start('Thinking');
+          // 显示工具执行结果（唯一一次）
+          spinner.stop();
+          console.log();
+          const parsedResult = JSON.parse(event.result);
+          const status = parsedResult.success !== false
+            ? SUCCESS('✓') + (event.duration ? ` ${event.duration}ms` : '')
+            : ERROR('✗') + (event.duration ? ` ${event.duration}ms` : '');
+          const resultArgSummary = compactToolArgs(lastToolArgs);
+          console.log(`  ${ACCENT('▸')} ${ACCENT(event.name)} ${DIM(resultArgSummary)} ${status}`);
+          // 不启动 spinner，等下一个 request_start 或 complete
           // Record tool result for session
           sessionMessagesToRecord.push({
             role: 'tool',
