@@ -1,7 +1,7 @@
 /**
  * openhorse - 命令行交互入口
  *
- * 简化版 REPL，使用标准 readline。
+ * 简化版 REPL，不依赖 React hooks
  */
 
 import 'dotenv/config';
@@ -20,7 +20,6 @@ import { parseInput, buildCommandSuggestions } from './commands/parser';
 import type { CommandContext } from './commands/types';
 import { getModeDisplayText } from './commands/types';
 import { renderHeaderBox } from './ui/box';
-import * as readline from 'readline';
 
 // ============================================================================
 // 颜色常量
@@ -40,16 +39,51 @@ const SUCCESS = chalk.green;
 let llm: LLMService | null = null;
 let store: Store;
 let currentSession: SessionMeta | null = null;
+let runtime: OpenHorseRuntime;
+
+// REPL 状态
+let inputBuffer = '';
+let messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; isError?: boolean }> = [];
+let isLoading = false;
+let spinnerFrame = 0;
+let spinnerTimer: NodeJS.Timeout | null = null;
 
 // ============================================================================
-// 欢迎界面
+// Spinner
 // ============================================================================
 
-function printBanner(): void {
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+function startSpinner() {
+  isLoading = true;
+  spinnerTimer = setInterval(() => {
+    spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
+    redraw();
+  }, 80);
+}
+
+function stopSpinner() {
+  isLoading = false;
+  if (spinnerTimer) {
+    clearInterval(spinnerTimer);
+    spinnerTimer = null;
+  }
+}
+
+// ============================================================================
+// 渲染
+// ============================================================================
+
+function redraw() {
+  // 清屏
+  process.stdout.write('\x1b[2J\x1b[H');
+
+  // Header
   const art = figlet.textSync('OPENHORSE', { font: 'standard' });
   console.log(BRAND(art));
   console.log();
 
+  // 状态信息
   const config = store.getSnapshot().config;
   const baseUrl = config.apiBaseUrl || '';
   const headerBox = renderHeaderBox({
@@ -61,22 +95,50 @@ function printBanner(): void {
     endpoint: baseUrl,
     status: llm ? 'ready' : 'loading',
     statusText: llm ? undefined : 'Set OPENHORSE_API_KEY in .env',
-    version: '0.1.0',
+    version: '0.1.1',
   });
   console.log(headerBox);
   console.log();
+
+  // 消息历史
+  messages.forEach(msg => {
+    if (msg.role === 'system') {
+      if (msg.isError) {
+        console.log(ERROR(msg.content));
+      } else {
+        console.log(SUCCESS(msg.content));
+      }
+    } else {
+      const color = msg.role === 'user' ? ACCENT : DIM;
+      const prefix = msg.role === 'user' ? '❯ ' : '  ';
+      console.log(color(prefix + msg.content));
+    }
+  });
+
+  // Loading spinner
+  if (isLoading) {
+    console.log();
+    console.log(chalk.cyan(SPINNER_FRAMES[spinnerFrame] + ' Processing...'));
+  }
+
+  // 模式指示
+  const mode = store.getSnapshot().permissionMode;
+  const modeText = getModeDisplayText(mode);
+  const modeIndicator = modeText ? `[${modeText}] ` : '';
+
+  // 输入行
+  console.log();
+  console.log(ACCENT('❯ ') + DIM(modeIndicator) + (inputBuffer || DIM('输入消息或 /help 查看命令...')));
 }
 
 // ============================================================================
-// 交互模式（简化版）
+// 输入处理
 // ============================================================================
 
-async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: ACCENT('❯ ') + DIM(getModeIndicator()),
-  });
+async function handleSubmit(text: string) {
+  inputBuffer = '';
+  messages.push({ role: 'user', content: text });
+  startSpinner();
 
   const ctx: CommandContext = {
     cwd: process.cwd(),
@@ -87,75 +149,95 @@ async function interactiveMode(runtime: OpenHorseRuntime): Promise<void> {
     sessionId: currentSession?.id,
   };
 
-  console.log(SUCCESS('✔ System initialized successfully'));
-  console.log(DIM('  Type /help for available commands, /exit to quit'));
-  console.log(DIM('  Press shift+tab to cycle permission modes'));
-  if (!isConfigured(ctx.config)) {
-    console.log(WARN('  ⚠ LLM not configured — chat mode unavailable'));
-    console.log(DIM('  Set OPENHORSE_API_KEY in .env to enable chat'));
+  try {
+    const parsed = parseInput(text);
+
+    if (parsed.isCommand) {
+      stopSpinner();
+      const cmd = findCommand(parsed.name);
+      if (cmd) {
+        const result = await cmd.execute(ctx, parsed.args);
+        if (result.continueAsChat && result.chatInput) {
+          startSpinner();
+          await executeChat(ctx, result.chatInput);
+          stopSpinner();
+          messages.push({ role: 'assistant', content: 'Response received' });
+        } else {
+          messages.push({ role: 'system', content: `/${parsed.name} executed` });
+        }
+      } else {
+        messages.push({ role: 'system', content: `Unknown command: /${parsed.name}`, isError: true });
+        const suggestions = buildCommandSuggestions(parsed.name);
+        if (suggestions.length > 0) {
+          messages.push({ role: 'system', content: `Did you mean: ${suggestions.map(s => `/${s}`).join(', ')}?` });
+        }
+      }
+    } else {
+      // Chat
+      await executeChat(ctx, parsed.args);
+      stopSpinner();
+      messages.push({ role: 'assistant', content: 'Response received' });
+    }
+  } catch (err: any) {
+    stopSpinner();
+    messages.push({ role: 'system', content: `Error: ${err.message || String(err)}`, isError: true });
   }
+
+  redraw();
+}
+
+async function shutdown() {
+  stopSpinner();
   console.log();
+  console.log(DIM('Shutting down...'));
+  await runtime.shutdown();
+  console.log(SUCCESS('Goodbye! 🐴'));
+  process.exit(0);
+}
 
-  rl.prompt();
+// ============================================================================
+// Raw Mode 输入
+// ============================================================================
 
-  rl.on('line', async (line: string) => {
-    const input = line.trim();
-    if (!input) {
-      rl.prompt();
+function setupInput() {
+  if (!process.stdin.isTTY) return;
+
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding('utf8');
+
+  process.stdin.on('data', async (data: string) => {
+    const char = data.charAt(0);
+
+    // Ctrl+C
+    if (char === '\x03') {
+      await shutdown();
       return;
     }
 
-    const parsed = parseInput(input);
+    if (isLoading) return;
 
-    try {
-      if (parsed.isCommand) {
-        const cmd = findCommand(parsed.name);
-        if (cmd) {
-          const result = await cmd.execute(ctx, parsed.args);
-          if (result.continueAsChat && result.chatInput) {
-            await executeChat(ctx, result.chatInput);
-          }
-        } else {
-          console.log(ERROR(`Unknown command: /${parsed.name}`));
-          const suggestions = buildCommandSuggestions(parsed.name);
-          if (suggestions.length > 0) {
-            console.log(DIM(`Did you mean: ${suggestions.map(s => `/${s}`).join(', ')}?`));
-          }
-        }
-      } else {
-        // 直接 chat
-        await executeChat(ctx, parsed.args);
+    // Enter
+    if (char === '\r' || char === '\n') {
+      if (inputBuffer.trim()) {
+        await handleSubmit(inputBuffer);
       }
-    } catch (err: any) {
-      console.log(ERROR(`Error: ${err.message || String(err)}`));
+      return;
     }
 
-    // 更新 prompt 显示当前模式
-    rl.setPrompt(ACCENT('❯ ') + DIM(getModeIndicator()));
-    rl.prompt();
-  });
+    // Backspace
+    if (char === '\x7f') {
+      inputBuffer = inputBuffer.slice(0, -1);
+      redraw();
+      return;
+    }
 
-  rl.on('close', async () => {
-    console.log();
-    console.log(DIM('Shutting down...'));
-    await runtime.shutdown();
-    console.log(SUCCESS('Goodbye! 🐴'));
-    process.exit(0);
+    // 正常字符
+    if (char.length === 1 && char.charCodeAt(0) >= 32) {
+      inputBuffer += char;
+      redraw();
+    }
   });
-
-  rl.on('SIGINT', async () => {
-    console.log();
-    console.log(DIM('Shutting down...'));
-    await runtime.shutdown();
-    console.log(SUCCESS('Goodbye! 🐴'));
-    process.exit(0);
-  });
-}
-
-function getModeIndicator(): string {
-  const mode = store.getSnapshot().permissionMode;
-  const modeText = getModeDisplayText(mode);
-  return modeText ? `[${modeText}] ` : '';
 }
 
 // ============================================================================
@@ -191,28 +273,30 @@ async function main(): Promise<void> {
     }
   }
 
-  printBanner();
-
   const config = store.getSnapshot().config;
-  const runtime = await init({
+  runtime = await init({
     name: config.name,
     mode: config.mode as any,
     logLevel: config.logLevel,
   });
 
   process.on('SIGINT', async () => {
-    console.log(`\n${WARN('Received SIGINT')}`);
-    await runtime.shutdown();
-    process.exit(0);
+    await shutdown();
   });
   process.on('SIGTERM', async () => {
-    console.log(`\n${WARN('Received SIGTERM')}`);
-    await runtime.shutdown();
-    process.exit(0);
+    await shutdown();
   });
 
   await runtime.start();
-  await interactiveMode(runtime);
+
+  // 隐藏光标
+  process.stdout.write('\x1b[?25l');
+
+  // 初始渲染
+  redraw();
+
+  // 设置输入
+  setupInput();
 }
 
 main().catch(err => {
