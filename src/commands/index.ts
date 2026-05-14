@@ -500,7 +500,10 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
     })) {
       switch (event.type) {
         case 'request_start':
-          spinner.update(`Turn ${event.turn}...`);
+          // 停止 spinner，等待 LLM 响应
+          spinner.stop();
+          console.log();
+          console.log(DIM(`Turn ${event.turn}...`));
           break;
 
         case 'tool_call':
@@ -515,7 +518,9 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           break;
 
         case 'tool_result':
-          spinner.start('Thinking');
+          // 显示工具结果后，准备下一轮（不启动 spinner）
+          const parsedResult = JSON.parse(event.result);
+          console.log(toolLine(event.name, {}, parsedResult.success !== false, event.duration));
           // Record tool result for session
           sessionMessagesToRecord.push({
             role: 'tool',
@@ -525,8 +530,11 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           });
           break;
 
+        case 'strategy_exhausted':
+          console.log(WARN(`⚠ ${event.suggestion}`));
+          break;
+
         case 'complete':
-          spinner.stop();
           finalContent = event.content;
           finalModel = event.model;
           finalUsage = event.usage;
