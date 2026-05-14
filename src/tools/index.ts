@@ -15,6 +15,15 @@ import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, createR
 import { join, resolve, relative, extname } from 'path';
 import { createInterface } from 'readline';
 import { buildTool, type OpenHorseTool, type ToolResult, type ToolContext } from '../framework/tool';
+import {
+  saveMemory,
+  loadMemory,
+  loadAllMemories,
+  searchMemories,
+  deleteMemory,
+  type MemoryEntry,
+  type MemoryType,
+} from '../memory';
 
 // ============================================================================
 // 工具集
@@ -241,6 +250,155 @@ export const TOOLS: OpenHorseTool[] = [
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
     userFacingName: (args) => `Grep ${args.pattern as string}`,
+  }),
+
+  // Memory tools
+  buildTool({
+    name: 'memory_save',
+    description: 'Save a memory entry to the persistent memory system. Memories help tailor behavior to user preferences.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Memory name (kebab-case, e.g., "user-role", "feedback-style")',
+        },
+        type: {
+          type: 'string',
+          enum: ['user', 'feedback', 'project', 'reference'],
+          description: 'Memory type',
+        },
+        description: {
+          type: 'string',
+          description: 'One-line description for memory index',
+        },
+        content: {
+          type: 'string',
+          description: 'Memory content. For feedback/project: use rule + Why + How to apply structure',
+        },
+      },
+      required: ['name', 'type', 'content'],
+    },
+    execute: async (args) => {
+      const name = args.name as string;
+      const type = args.type as MemoryType;
+      const content = args.content as string;
+      const description = (args.description as string) || content.slice(0, 80);
+
+      if (!name || typeof name !== 'string') {
+        return { success: false, output: '', error: 'memory_save requires a name parameter' };
+      }
+      if (!type || !['user', 'feedback', 'project', 'reference'].includes(type)) {
+        return { success: false, output: '', error: 'memory_save requires a valid type: user, feedback, project, or reference' };
+      }
+      if (!content || typeof content !== 'string') {
+        return { success: false, output: '', error: 'memory_save requires a content parameter' };
+      }
+
+      try {
+        const entry: MemoryEntry = {
+          name,
+          type,
+          description,
+          content,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        saveMemory(entry);
+        return { success: true, output: `Saved memory: ${name} (${type})` };
+      } catch (err: any) {
+        return { success: false, output: '', error: err.message };
+      }
+    },
+    isReadOnly: () => false,
+    userFacingName: (args) => `Memory save ${args.name as string}`,
+  }),
+
+  buildTool({
+    name: 'memory_recall',
+    description: 'Recall memories from the memory system. Returns matching memories or all if no query.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query (optional, returns all if empty)',
+        },
+        type: {
+          type: 'string',
+          enum: ['user', 'feedback', 'project', 'reference'],
+          description: 'Filter by memory type (optional)',
+        },
+      },
+      required: [],
+    },
+    execute: async (args) => {
+      try {
+        const query = (args.query as string) || '';
+        const type = args.type as MemoryType | undefined;
+
+        let memories: MemoryEntry[];
+        if (type) {
+          memories = loadAllMemories().filter(m => m.type === type);
+        } else if (query) {
+          memories = searchMemories(query);
+        } else {
+          memories = loadAllMemories();
+        }
+
+        if (memories.length === 0) {
+          return { success: true, output: 'No memories found' };
+        }
+
+        const lines: string[] = [];
+        for (const mem of memories) {
+          lines.push(`## ${mem.name} (${mem.type})`);
+          lines.push(mem.description);
+          lines.push(mem.content);
+          lines.push('');
+        }
+
+        return { success: true, output: lines.join('\n') };
+      } catch (err: any) {
+        return { success: false, output: '', error: err.message };
+      }
+    },
+    isReadOnly: () => true,
+    userFacingName: (args) => `Memory recall ${(args.query as string) || 'all'}`,
+  }),
+
+  buildTool({
+    name: 'memory_forget',
+    description: 'Delete a memory entry from the memory system.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Memory name to delete',
+        },
+      },
+      required: ['name'],
+    },
+    execute: async (args) => {
+      const name = args.name as string;
+      if (!name || typeof name !== 'string') {
+        return { success: false, output: '', error: 'memory_forget requires a name parameter' };
+      }
+
+      try {
+        const existing = loadMemory(name);
+        if (!existing) {
+          return { success: false, output: '', error: `Memory not found: ${name}` };
+        }
+        deleteMemory(name);
+        return { success: true, output: `Deleted memory: ${name}` };
+      } catch (err: any) {
+        return { success: false, output: '', error: err.message };
+      }
+    },
+    isReadOnly: () => false,
+    userFacingName: (args) => `Memory forget ${args.name as string}`,
   }),
 ];
 
