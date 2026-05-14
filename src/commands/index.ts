@@ -530,10 +530,7 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           break;
 
         case 'tool_call':
-          // 显示工具开始执行（带参数摘要）
-          spinner.stop();
-          const argSummary = compactToolArgs(event.args);
-          console.log(`  ${ACCENT('▸')} ${ACCENT(event.name)} ${DIM(argSummary)}`);
+          // 只保存参数，不显示（等 tool_result 显示）
           lastToolCallId = event.callId;
           lastToolArgs = event.args;
           // Record tool call for session
@@ -546,16 +543,16 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           break;
 
         case 'tool_result':
-          // 显示工具执行结果
+          // 显示工具执行结果（唯一一次）
           spinner.stop();
+          console.log();
           const parsedResult = JSON.parse(event.result);
           const status = parsedResult.success !== false
             ? SUCCESS('✓') + (event.duration ? ` ${event.duration}ms` : '')
             : ERROR('✗') + (event.duration ? ` ${event.duration}ms` : '');
           const resultArgSummary = compactToolArgs(lastToolArgs);
           console.log(`  ${ACCENT('▸')} ${ACCENT(event.name)} ${DIM(resultArgSummary)} ${status}`);
-          // 重新启动 spinner
-          spinner.start(`Turn`);
+          // 不启动 spinner，等下一个 request_start 或 complete
           // Record tool result for session
           sessionMessagesToRecord.push({
             role: 'tool',
