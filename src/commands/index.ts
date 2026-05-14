@@ -488,6 +488,7 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
   let responseStarted = false;
   const sessionMessagesToRecord: SessionMessage[] = [];
   let lastToolCallId = '';
+  let lastToolArgs: Record<string, unknown> = {};
 
   const toolExecutor = async (name: string, args: Record<string, unknown>) => {
     const start = Date.now();
@@ -530,9 +531,11 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
 
         case 'tool_call':
           // 显示工具开始执行（带参数摘要）
+          spinner.stop();
           const argSummary = compactToolArgs(event.args);
-          console.log(`  ${ACCENT('▸')} ${ACCENT(event.name)} ${DIM(argSummary)} ${WARN('(running)')}`);
+          console.log(`  ${ACCENT('▸')} ${ACCENT(event.name)} ${DIM(argSummary)}`);
           lastToolCallId = event.callId;
+          lastToolArgs = event.args;
           // Record tool call for session
           sessionMessagesToRecord.push({
             role: 'assistant',
@@ -543,15 +546,16 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
           break;
 
         case 'tool_result':
-          // 显示工具执行结果（替换 running 状态）
+          // 显示工具执行结果
+          spinner.stop();
           const parsedResult = JSON.parse(event.result);
           const status = parsedResult.success !== false
             ? SUCCESS('✓') + (event.duration ? ` ${event.duration}ms` : '')
             : ERROR('✗') + (event.duration ? ` ${event.duration}ms` : '');
-          // 在同一行更新结果（使用 ANSI 控制码）
-          process.stdout.write(`\r\x1b[2K  ${ACCENT('▸')} ${ACCENT(event.name)} ${DIM(compactToolArgs({}))} ${status}\n`);
+          const resultArgSummary = compactToolArgs(lastToolArgs);
+          console.log(`  ${ACCENT('▸')} ${ACCENT(event.name)} ${DIM(resultArgSummary)} ${status}`);
           // 重新启动 spinner
-          spinner.start('Thinking');
+          spinner.start(`Turn`);
           // Record tool result for session
           sessionMessagesToRecord.push({
             role: 'tool',
