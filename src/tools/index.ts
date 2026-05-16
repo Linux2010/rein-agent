@@ -24,6 +24,7 @@ import {
   type MemoryEntry,
   type MemoryType,
 } from '../memory';
+import { readSessionMessages, loadSessionMeta, listSessions, type SessionMessage } from '../services/session-storage';
 
 // ============================================================================
 // 工具集
@@ -343,6 +344,7 @@ export const TOOLS: OpenHorseTool[] = [
       }
 
       try {
+        const projectPath = process.cwd();
         const entry: MemoryEntry = {
           name,
           type,
@@ -351,7 +353,7 @@ export const TOOLS: OpenHorseTool[] = [
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
-        saveMemory(entry);
+        saveMemory(entry, projectPath);
         return { success: true, output: `Saved memory: ${name} (${type})` };
       } catch (err: any) {
         return { success: false, output: '', error: err.message };
@@ -381,16 +383,17 @@ export const TOOLS: OpenHorseTool[] = [
     },
     execute: async (args) => {
       try {
+        const projectPath = process.cwd();
         const query = (args.query as string) || '';
         const type = args.type as MemoryType | undefined;
 
         let memories: MemoryEntry[];
         if (type) {
-          memories = loadAllMemories().filter(m => m.type === type);
+          memories = loadAllMemories(projectPath).filter(m => m.type === type);
         } else if (query) {
-          memories = searchMemories(query);
+          memories = searchMemories(query, projectPath);
         } else {
-          memories = loadAllMemories();
+          memories = loadAllMemories(projectPath);
         }
 
         if (memories.length === 0) {
@@ -434,11 +437,12 @@ export const TOOLS: OpenHorseTool[] = [
       }
 
       try {
-        const existing = loadMemory(name);
+        const projectPath = process.cwd();
+        const existing = loadMemory(name, projectPath);
         if (!existing) {
           return { success: false, output: '', error: `Memory not found: ${name}` };
         }
-        deleteMemory(name);
+        deleteMemory(name, projectPath);
         return { success: true, output: `Deleted memory: ${name}` };
       } catch (err: any) {
         return { success: false, output: '', error: err.message };
@@ -446,6 +450,112 @@ export const TOOLS: OpenHorseTool[] = [
     },
     isReadOnly: () => false,
     userFacingName: (args) => `Memory forget ${args.name as string}`,
+  }),
+
+  // History search tool
+  buildTool({
+    name: 'history_search',
+    description: 'Search previous tool operations in current or past sessions. Helps find what was done before.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query (tool name, file path, keyword)',
+        },
+        sessionId: {
+          type: 'string',
+          description: 'Session ID to search (optional, defaults to searching recent sessions)',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results (optional, default 10)',
+        },
+      },
+      required: ['query'],
+    },
+    execute: async (args) => {
+      const query = args.query as string;
+      if (!query || typeof query !== 'string') {
+        return { success: false, output: '', error: 'history_search requires a query parameter' };
+      }
+
+      try {
+        const limit = (args.limit as number) || 10;
+        const sessionId = args.sessionId as string | undefined;
+
+        // If sessionId provided, search that session; otherwise search all recent sessions
+        const sessions = sessionId
+          ? [loadSessionMeta(sessionId)!].filter(Boolean)
+          : listSessions(5);
+
+        const results: Array<{
+          sessionId: string;
+          tool: string;
+          args: string;
+          resultPreview: string;
+          timestamp: number;
+        }> = [];
+
+        for (const session of sessions) {
+          if (!session) continue;
+          const messages = readSessionMessages(session.id);
+
+          // Search through messages for tool calls matching query
+          for (let i = 0; i < messages.length; i++) {
+            const msg = messages[i];
+            if (msg.role === 'assistant' && msg.tool_calls) {
+              for (const tc of msg.tool_calls) {
+                // Match tool name or arguments content
+                const matchesQuery =
+                  tc.function.name.toLowerCase().includes(query.toLowerCase()) ||
+                  tc.function.arguments.toLowerCase().includes(query.toLowerCase());
+
+                if (matchesQuery) {
+                  // Find corresponding tool result
+                  const nextMsg = messages[i + 1];
+                  const resultPreview = nextMsg?.role === 'tool' && nextMsg.toolCallId === tc.id
+                    ? nextMsg.content.slice(0, 200)
+                    : '(no result)';
+
+                  results.push({
+                    sessionId: session.id.slice(0, 8),
+                    tool: tc.function.name,
+                    args: tc.function.arguments.slice(0, 100),
+                    resultPreview,
+                    timestamp: msg.timestamp,
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // Sort by timestamp (newest first) and limit
+        results.sort((a, b) => b.timestamp - a.timestamp);
+        const limited = results.slice(0, limit);
+
+        if (limited.length === 0) {
+          return { success: true, output: 'No matching tool operations found' };
+        }
+
+        const lines: string[] = [];
+        lines.push(`Found ${limited.length} matching operations:`);
+        lines.push('');
+        for (const r of limited) {
+          lines.push(`Session ${r.sessionId}: ${r.tool}`);
+          lines.push(`  Args: ${r.args}`);
+          lines.push(`  Result: ${r.resultPreview.slice(0, 100)}...`);
+          lines.push('');
+        }
+
+        return { success: true, output: lines.join('\n') };
+      } catch (err: any) {
+        return { success: false, output: '', error: err.message };
+      }
+    },
+    isReadOnly: () => true,
+    userFacingName: (args) => `History search ${args.query as string}`,
   }),
 ];
 

@@ -24,6 +24,8 @@ export interface AppState {
   tokenUsage: { promptTokens: number; completionTokens: number } | null;
   permissionMode: PermissionMode;
   costTracker: CostTracker;
+  /** Project memory content loaded at startup */
+  memoryContent: string;
 }
 
 // ============================================================================
@@ -36,13 +38,14 @@ export class Store {
   private state: AppState;
   private listeners: Set<Listener> = new Set();
 
-  constructor(initial: Omit<AppState, 'conversationHistory' | 'isProcessing' | 'tokenUsage' | 'permissionMode' | 'costTracker'> & Partial<AppState>) {
+  constructor(initial: Omit<AppState, 'conversationHistory' | 'isProcessing' | 'tokenUsage' | 'permissionMode' | 'costTracker' | 'memoryContent'> & Partial<AppState>) {
     this.state = {
       conversationHistory: [],
       isProcessing: false,
       tokenUsage: null,
       permissionMode: 'default',
       costTracker: new CostTracker(),
+      memoryContent: '',
       ...initial,
     } as AppState;
   }
