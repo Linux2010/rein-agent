@@ -16,7 +16,7 @@ import { TOOLS } from './tools';
 import { loadConfig, isConfigured } from './services/config';
 import { ensureConfigDir } from './services/config-dir';
 import { recordFirstStartTime, incrementSessionCount } from './services/global-config';
-import { createSession, type SessionMeta } from './services/session-storage';
+import { createSession, type SessionMeta, readSessionMessages, updateSessionSummary, endSession } from './services/session-storage';
 import { loadAllMemories } from './memory/storage';
 import { Store } from './framework';
 import { findCommand, executeChat, getCommandNames } from './commands';
@@ -223,7 +223,15 @@ async function main(): Promise<void> {
     process.exit(0);
   });
 
-  process.on('SIGINT', () => {
+  process.on('SIGINT', async () => {
+    // Save session summary before exit
+    if (currentSession) {
+      const messages = readSessionMessages(currentSession.id);
+      if (messages.length > 0) {
+        updateSessionSummary(currentSession.id, messages);
+      }
+      endSession(currentSession.id);
+    }
     rl.close();
   });
 
