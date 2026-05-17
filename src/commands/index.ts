@@ -22,6 +22,8 @@ import {
   appendSessionMessage,
   appendSessionMessages,
   endSession,
+  updateSessionSummary,
+  readSessionMessages,
   type SessionMeta,
   type SessionMessage,
   type ToolCallRecord,
@@ -650,6 +652,16 @@ async function handleChat(ctx: CommandContext, input: string): Promise<CommandRe
 async function handleExit(ctx: CommandContext): Promise<CommandResult> {
   console.log();
   console.log(DIM('Shutting down...'));
+
+  // Update session summary before exit
+  if (ctx.sessionId) {
+    const messages = readSessionMessages(ctx.sessionId);
+    if (messages.length > 0) {
+      updateSessionSummary(ctx.sessionId, messages);
+    }
+    endSession(ctx.sessionId);
+  }
+
   await ctx.runtime.shutdown();
   console.log(SUCCESS('Goodbye! 🐴'));
   process.exit(0);
@@ -818,15 +830,18 @@ function handleResume(ctx: CommandContext, args: string): CommandResult {
       console.log(DIM(`  ID: ${lastSession.id.slice(0, 8)}`));
       console.log(DIM(`  Model: ${lastSession.model}`));
       console.log(DIM(`  Started: ${new Date(lastSession.startTime).toLocaleString()}`));
-      console.log();
 
-      // Load history
+      // Load history and show summary
       const history = loadSessionHistory(lastSession.id);
       if (history.length > 0) {
-        // Restore conversation history
+        const summary = generateHistorySummary(history);
+        console.log(DIM(`  Summary: ${summary}`));
+        console.log();
+
         ctx.store.setState({ conversationHistory: history });
         console.log(SUCCESS(`✔ Restored ${history.length} messages from session`));
       } else {
+        console.log();
         console.log(DIM('  No messages in session'));
       }
 
@@ -854,19 +869,58 @@ function handleResume(ctx: CommandContext, args: string): CommandResult {
   console.log(HEADER(`Resuming session ${session.id.slice(0, 8)}`));
   console.log(DIM(`  Model: ${session.model}`));
   console.log(DIM(`  Started: ${new Date(session.startTime).toLocaleString()}`));
-  console.log();
 
-  // Load history
+  // Load history and show summary
   const history = loadSessionHistory(session.id);
   if (history.length > 0) {
+    const summary = generateHistorySummary(history);
+    console.log(DIM(`  Summary: ${summary}`));
+    console.log();
+
     ctx.store.setState({ conversationHistory: history });
     console.log(SUCCESS(`✔ Restored ${history.length} messages`));
   } else {
+    console.log();
     console.log(DIM('  No messages in session'));
   }
 
   console.log();
   return { success: true };
+}
+
+/** Generate a brief summary of conversation history */
+function generateHistorySummary(messages: Message[]): string {
+  const userMsgs = messages.filter(m => m.role === 'user' && m.content);
+  const assistantMsgsWithTools = messages.filter(m => m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0);
+
+  // Extract topics from first few user messages
+  const topics = userMsgs.slice(0, 3).map(m => {
+    const content = m.content || '';
+    return content.length > 40 ? content.slice(0, 40) + '...' : content;
+  });
+
+  // Extract tools used
+  const toolsUsed = assistantMsgsWithTools.flatMap(m =>
+    m.tool_calls?.map(tc => tc.function.name) || []
+  );
+  const uniqueTools = [...new Set(toolsUsed)];
+
+  // Build summary
+  const parts: string[] = [];
+
+  if (topics.length > 0) {
+    parts.push(`Topics: ${topics.join('; ')}`);
+  }
+
+  if (uniqueTools.length > 0) {
+    parts.push(`Tools: ${uniqueTools.join(', ')}`);
+  }
+
+  if (parts.length === 0) {
+    return 'No significant activity';
+  }
+
+  return parts.join('. ');
 }
 
 // ============================================================================

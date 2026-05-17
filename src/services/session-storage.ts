@@ -44,6 +44,12 @@ export interface SessionMeta {
   tokenCount: number;
   /** 成本 (USD) */
   cost: number;
+  /** 任务摘要 */
+  taskSummary?: string;
+  /** 使用过的工具列表 */
+  toolsUsed?: string[];
+  /** 修改过的文件列表 */
+  filesModified?: string[];
 }
 
 /** 历史记录条目 */
@@ -144,6 +150,50 @@ export function endSession(sessionId: string): void {
   if (!session) return;
 
   session.endTime = Date.now();
+  saveSessionMeta(session);
+}
+
+/**
+ * 更新会话任务摘要
+ * 从会话消息中提取关键信息并更新元数据
+ */
+export function updateSessionSummary(sessionId: string, messages: SessionMessage[]): void {
+  const session = loadSessionMeta(sessionId);
+  if (!session) return;
+
+  // 提取工具使用列表
+  const toolsUsed: string[] = [];
+  const filesModified: string[] = [];
+
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        toolsUsed.push(tc.function.name);
+
+        // 从 write_file, edit_file 工具参数中提取文件路径
+        if (tc.function.name === 'write_file' || tc.function.name === 'edit_file') {
+          try {
+            const args = JSON.parse(tc.function.arguments);
+            if (args.path) {
+              filesModified.push(args.path);
+            }
+          } catch {
+            // ignore parse errors
+          }
+        }
+      }
+    }
+  }
+
+  // 提取任务摘要（从第一个用户消息）
+  const firstUserMsg = messages.find(m => m.role === 'user' && m.content);
+  const taskSummary = firstUserMsg?.content?.slice(0, 100) || '';
+
+  // 更新 session
+  session.toolsUsed = [...new Set(toolsUsed)];  // unique
+  session.filesModified = [...new Set(filesModified)];  // unique
+  session.taskSummary = taskSummary.length > 100 ? taskSummary.slice(0, 100) + '...' : taskSummary;
+
   saveSessionMeta(session);
 }
 
